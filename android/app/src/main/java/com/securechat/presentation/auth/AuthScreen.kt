@@ -32,7 +32,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.securechat.R
 import com.securechat.core.utils.DeviceInfo
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
@@ -42,8 +41,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun AuthScreen(onAuthSuccess: () -> Unit) {
     val context = LocalContext.current
-    val phoneViewModel = viewModel<PhoneLoginViewModel>()
-    val googleViewModel = viewModel<GoogleLoginViewModel>()
+    val phoneViewModel = hiltViewModel<PhoneLoginViewModel>()
+    val googleViewModel = hiltViewModel<GoogleLoginViewModel>()
     val scope = rememberCoroutineScope()
     var phoneNumber by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }

@@ -41,7 +41,7 @@ import com.securechat.data.local.entity.UserSettingsEntity
         PendingOperationEntity::class,
         UserSettingsEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -68,7 +68,6 @@ abstract class SecureChatDatabase : RoomDatabase() {
                     SecureChatDatabase::class.java,
                     "securechat.db"
                 )
-                    .addMigrations(MIGRATION_1_2) // Add future migrations here
                     .fallbackToDestructiveMigration() // For development only
                     .build()
                 INSTANCE = instance
@@ -83,12 +82,5 @@ abstract class SecureChatDatabase : RoomDatabase() {
         //         // Add migration SQL here
         //     }
         // }
-        
-        // Placeholder for future migrations
-        private val MIGRATION_1_2 = object : Migration(1, 2) {
-            override fun migrate(database: SupportSQLiteDatabase) {
-                // No-op placeholder - real migrations will be added when schema changes
-            }
-        }
     }
 }
