@@ -93,7 +93,14 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
                             googleViewModel.errorMessage.value = "Google sign-in failed. Please try again."
                         }
                     } catch (e: Exception) {
-                        googleViewModel.errorMessage.value = "Google sign-in cancelled or failed."
+                        android.util.Log.e("GoogleAuth", "Google sign-in failed", e)
+                        googleViewModel.errorMessage.value = when (e) {
+                            is androidx.credentials.exceptions.NoCredentialException ->
+                                "Google sign-in not available. Check that the app's SHA-1 fingerprint is registered."
+                            is androidx.credentials.exceptions.GetCredentialCancellationException ->
+                                "Google sign-in cancelled."
+                            else -> "Google sign-in failed. Please try again."
+                        }
                     }
                 }
             },

@@ -1,20 +1,20 @@
 {
   "project_info": {
-    "project_number": "1017026100204",
-    "project_id": "chat-c82ea",
-    "storage_bucket": "chat-c82ea.firebasestorage.app"
+    "project_number": "906804088645",
+    "project_id": "chatgo-c8449",
+    "storage_bucket": "chatgo-c8449.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:1017026100204:android:27f4e8a81901d272fc1ec9",
+        "mobilesdk_app_id": "1:906804088645:android:e10b379107a7177481b82c",
         "android_client_info": {
           "package_name": "com.securechat.debug"
         }
       },
       "oauth_client": [
         {
-          "client_id": "1017026100204-hd0mbutu8dgkhgkcp3mud34shau3d87p.apps.googleusercontent.com",
+          "client_id": "906804088645-mi7ci12i915tuhcoui3ko006jfm8st61.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "com.securechat.debug",
@@ -22,57 +22,20 @@
           }
         },
         {
-          "client_id": "1017026100204-jenac0l9o4juhdqtohv28j8dljfu7fhm.apps.googleusercontent.com",
+          "client_id": "906804088645-d56qcjqm62prm6mccvch22nena3hflg6.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
       "api_key": [
         {
-          "current_key": "AIzaSyDKmPbiempJ0Qt5fjUAqFs8_xvf9qFnKgA"
+          "current_key": "AIzaSyDv2XG9EjrkDC4ufJlAJFlWosGVHbNz7IM"
         }
       ],
       "services": {
         "appinvite_service": {
           "other_platform_oauth_client": [
             {
-              "client_id": "1017026100204-jenac0l9o4juhdqtohv28j8dljfu7fhm.apps.googleusercontent.com",
-              "client_type": 3
-            }
-          ]
-        }
-      }
-    },
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:1017026100204:android:984c3144f38b6f62fc1ec9",
-        "android_client_info": {
-          "package_name": "com.securechat"
-        }
-      },
-      "oauth_client": [
-        {
-          "client_id": "1017026100204-r5335c630oomgu53upoo9p6fui61u675.apps.googleusercontent.com",
-          "client_type": 1,
-          "android_info": {
-            "package_name": "com.securechat",
-            "certificate_hash": "c13439a0fd1b3254879fb4da38496c24a17df2cf"
-          }
-        },
-        {
-          "client_id": "1017026100204-jenac0l9o4juhdqtohv28j8dljfu7fhm.apps.googleusercontent.com",
-          "client_type": 3
-        }
-      ],
-      "api_key": [
-        {
-          "current_key": "AIzaSyDKmPbiempJ0Qt5fjUAqFs8_xvf9qFnKgA"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": [
-            {
-              "client_id": "1017026100204-jenac0l9o4juhdqtohv28j8dljfu7fhm.apps.googleusercontent.com",
+              "client_id": "906804088645-d56qcjqm62prm6mccvch22nena3hflg6.apps.googleusercontent.com",
               "client_type": 3
             }
           ]
