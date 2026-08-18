@@ -1,8 +1,10 @@
 package auth
 
 import (
+	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/securechat/server/config"
@@ -10,6 +12,7 @@ import (
 	apperrors "github.com/securechat/server/pkg/errors"
 	"github.com/securechat/server/pkg/logger"
 	"go.uber.org/zap"
+	"google.golang.org/api/idtoken"
 )
 
 type Handler struct {
@@ -40,6 +43,7 @@ func RegisterRoutes(api fiber.Router, db *sql.DB, tokenManager *TokenManager, cf
 	auth := api.Group("/auth")
 	auth.Post("/send-otp", handler.SendOTP)
 	auth.Post("/verify-otp", handler.VerifyOTP)
+	auth.Post("/google", handler.GoogleAuth)
 	auth.Post("/refresh", handler.RefreshToken)
 	auth.Post("/logout", handler.Logout)
 }
@@ -92,7 +96,8 @@ type VerifyOTPResponse struct {
 
 type UserInfo struct {
 	ID              int64   `json:"id"`
-	PhoneNumber     string  `json:"phone_number"`
+	PhoneNumber     *string `json:"phone_number"`
+	Email           *string `json:"email"`
 	DisplayName     string  `json:"display_name"`
 	Username        *string `json:"username,omitempty"`
 	ProfileImageID  *int64  `json:"profile_image_id,omitempty"`
@@ -123,7 +128,54 @@ func (h *Handler) VerifyOTP(c *fiber.Ctx) error {
 			RefreshExpiresIn: result.RefreshExpiresIn,
 			User: UserInfo{
 				ID:             result.User.ID,
-				PhoneNumber:    result.User.PhoneNumber,
+				PhoneNumber:    nullString(result.User.PhoneNumber),
+				Email:          nullString(result.User.Email),
+				DisplayName:    result.User.DisplayName,
+				Username:       nullString(result.User.Username),
+				ProfileImageID: nullInt64(result.User.ProfileImageID),
+			},
+		},
+	})
+}
+
+type GoogleAuthRequest struct {
+	IDToken          string `json:"id_token" validate:"required"`
+	DeviceName       string `json:"device_name" validate:"required,min=1,max=100"`
+	DeviceIdentifier string `json:"device_identifier" validate:"required,min=1,max=255"`
+}
+
+func (h *Handler) GoogleAuth(c *fiber.Ctx) error {
+	var req GoogleAuthRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(apperrors.NewErrorResponse(apperrors.ErrInvalidRequest))
+	}
+
+	info, err := h.verifyGoogleToken(c.Context(), req.IDToken)
+	if err != nil {
+		return c.Status(401).JSON(apperrors.NewErrorResponse(apperrors.ErrUnauthorized))
+	}
+
+	result, err := h.service.SignInWithGoogle(c.Context(), info, req.DeviceName, req.DeviceIdentifier)
+	if err != nil {
+		var appErr *apperrors.AppError
+		if errors.As(err, &appErr) {
+			return c.Status(appErr.Status).JSON(apperrors.NewErrorResponse(appErr))
+		}
+		logger.Log.Error("Failed to sign in with Google", zap.Error(err))
+		return c.Status(500).JSON(apperrors.NewErrorResponse(apperrors.ErrInternalServer))
+	}
+
+	return c.JSON(fiber.Map{
+		"success": true,
+		"data": VerifyOTPResponse{
+			AccessToken:      result.AccessToken,
+			RefreshToken:     result.RefreshToken,
+			AccessExpiresIn:  result.AccessExpiresIn,
+			RefreshExpiresIn: result.RefreshExpiresIn,
+			User: UserInfo{
+				ID:             result.User.ID,
+				PhoneNumber:    nullString(result.User.PhoneNumber),
+				Email:          nullString(result.User.Email),
 				DisplayName:    result.User.DisplayName,
 				Username:       nullString(result.User.Username),
 				ProfileImageID: nullInt64(result.User.ProfileImageID),
@@ -203,4 +255,31 @@ func nullInt64(ni sql.NullInt64) *int64 {
 		return &ni.Int64
 	}
 	return nil
+}
+
+func (h *Handler) verifyGoogleToken(ctx context.Context, idToken string) (GoogleUserInfo, error) {
+	if h.cfg.Google.ClientID == "" {
+		return GoogleUserInfo{}, fmt.Errorf("google client id not configured")
+	}
+
+	validator, err := idtoken.NewValidator(ctx)
+	if err != nil {
+		return GoogleUserInfo{}, fmt.Errorf("failed to create google token validator: %w", err)
+	}
+
+	payload, err := validator.Validate(ctx, idToken, h.cfg.Google.ClientID)
+	if err != nil {
+		return GoogleUserInfo{}, err
+	}
+
+	info := GoogleUserInfo{
+		Sub:   payload.Subject,
+		Email: payload.Claims["email"].(string),
+		EmailVerified: payload.Claims["email_verified"].(bool),
+		Name:  payload.Claims["name"].(string),
+	}
+	if pic, ok := payload.Claims["picture"].(string); ok {
+		info.Picture = pic
+	}
+	return info, nil
 }

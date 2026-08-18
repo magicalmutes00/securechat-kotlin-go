@@ -18,7 +18,7 @@ import kotlinx.serialization.Serializable
 data class UserEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val serverId: Long? = null,
-    val phoneNumber: String,
+    val phoneNumber: String?,
     val username: String?,
     val displayName: String,
     val profileImageId: Long? = null,

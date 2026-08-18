@@ -57,6 +57,43 @@ func (s *Service) VerifyOTP(ctx context.Context, phoneNumber, otp, deviceName, d
 		return nil, fmt.Errorf("failed to find/create user: %w", err)
 	}
 
+	return s.completeAuth(ctx, user, deviceName, deviceIdentifier)
+}
+
+type GoogleUserInfo struct {
+	Sub         string
+	Email       string
+	EmailVerified bool
+	Name        string
+	Picture     string
+}
+
+func (s *Service) SignInWithGoogle(ctx context.Context, info GoogleUserInfo, deviceName, deviceIdentifier string) (*RegisterResult, error) {
+	if !info.EmailVerified || info.Sub == "" {
+		return nil, apperrors.ErrInvalidRequest
+	}
+
+	// Find or create user by Google subject
+	user, err := s.repo.FindUserByGoogleSub(ctx, info.Sub)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			displayName := info.Name
+			if displayName == "" {
+				displayName = "Google User"
+			}
+			user, err = s.repo.CreateGoogleUser(ctx, info.Sub, info.Email, displayName)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create google user: %w", err)
+			}
+		} else {
+			return nil, fmt.Errorf("failed to find google user: %w", err)
+		}
+	}
+
+	return s.completeAuth(ctx, user, deviceName, deviceIdentifier)
+}
+
+func (s *Service) completeAuth(ctx context.Context, user *User, deviceName, deviceIdentifier string) (*RegisterResult, error) {
 	// Create device
 	device, err := s.repo.CreateDevice(ctx, user.ID, deviceName, deviceIdentifier, "android")
 	if err != nil {

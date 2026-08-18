@@ -6,6 +6,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.securechat.core.common.Result
 import com.securechat.core.security.TokenStorage
+import com.securechat.core.utils.DeviceInfo
+import com.securechat.domain.usecase.auth.GoogleSignInUseCase
 import com.securechat.domain.usecase.auth.SendOtpUseCase
 import com.securechat.domain.usecase.auth.VerifyOtpUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -134,6 +136,49 @@ class OtpVerifyViewModel @Inject constructor(
     fun resendOtp(phoneNumber: String, deviceName: String, deviceIdentifier: String, onSent: () -> Unit) {
         // This would call sendOtpUseCase again
         // Implementation delegated to PhoneLoginViewModel
+    }
+}
+
+@HiltViewModel
+class GoogleLoginViewModel @Inject constructor(
+    private val googleSignInUseCase: GoogleSignInUseCase,
+    private val tokenStorage: TokenStorage
+) : ViewModel() {
+
+    var isLoading: MutableState<Boolean> = mutableStateOf(false)
+    var errorMessage: MutableState<String?> = mutableStateOf(null)
+
+    fun googleSignIn(
+        idToken: String,
+        deviceName: String,
+        deviceIdentifier: String,
+        onSuccess: () -> Unit
+    ) {
+        if (idToken.isBlank()) {
+            errorMessage.value = "Google sign-in failed. Please try again."
+            return
+        }
+
+        isLoading.value = true
+        errorMessage.value = null
+
+        viewModelScope.launch {
+            val result = googleSignInUseCase(idToken, deviceName, deviceIdentifier)
+            isLoading.value = false
+
+            result.onSuccess {
+                onSuccess()
+            }.onFailure { e ->
+                errorMessage.value = when {
+                    e.message?.contains("not configured") == true -> "Google sign-in is not configured yet."
+                    else -> "Google sign-in failed. Please try again."
+                }
+            }
+        }
+    }
+
+    fun clearError() {
+        errorMessage.value = null
     }
 }
 

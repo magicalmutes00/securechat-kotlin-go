@@ -55,6 +55,13 @@ data class VerifyOtpResponse(
 )
 
 @Serializable
+data class GoogleSignInRequest(
+    val id_token: String,
+    val device_name: String,
+    val device_identifier: String
+)
+
+@Serializable
 data class RefreshTokenRequest(
     val refresh_token: String
 )
@@ -71,7 +78,8 @@ data class RefreshTokenResponse(
 @Serializable
 data class UserDto(
     val id: Long,
-    val phone_number: String,
+    val phone_number: String?,
+    val email: String? = null,
     val username: String?,
     val display_name: String,
     val profile_image_id: Long?,

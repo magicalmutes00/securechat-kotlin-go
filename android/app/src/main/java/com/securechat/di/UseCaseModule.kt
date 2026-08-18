@@ -6,6 +6,7 @@ import com.securechat.domain.repository.MediaRepository
 import com.securechat.domain.repository.MessageRepository
 import com.securechat.domain.repository.SyncRepository
 import com.securechat.domain.usecase.auth.LogoutUseCase
+import com.securechat.domain.usecase.auth.GoogleSignInUseCase
 import com.securechat.domain.usecase.auth.RefreshTokenUseCase
 import com.securechat.domain.usecase.auth.SendOtpUseCase
 import com.securechat.domain.usecase.auth.VerifyOtpUseCase
@@ -50,6 +51,10 @@ object UseCaseModule {
     @Provides
     @Singleton
     fun provideLogoutUseCase(authRepository: AuthRepository): LogoutUseCase = LogoutUseCase(authRepository)
+
+    @Provides
+    @Singleton
+    fun provideGoogleSignInUseCase(authRepository: AuthRepository): GoogleSignInUseCase = GoogleSignInUseCase(authRepository)
 
     // Chat UseCases
     @Provides

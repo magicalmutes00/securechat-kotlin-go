@@ -7,6 +7,7 @@ import com.securechat.data.local.dao.UserDao
 import com.securechat.data.local.entity.UserEntity
 import com.securechat.data.remote.api.ApiService
 import com.securechat.data.remote.dto.UserDto
+import com.securechat.data.remote.dto.VerifyOtpResponse
 import com.securechat.domain.model.User
 import com.securechat.domain.repository.AuthRepository
 import kotlinx.coroutines.Dispatchers
@@ -55,38 +56,58 @@ class AuthRepositoryImpl @Inject constructor(
                 device_name = deviceName,
                 device_identifier = deviceIdentifier
             )).flatMap { response ->
-                // Save tokens
-                tokenStorage.saveTokens(
-                    response.access_token,
-                    response.refresh_token,
-                    response.access_expires_in.toLong()
-                ).flatMap {
-                    // Save user to local DB
-                    val userEntity = UserEntity(
-                        serverId = response.user.id,
-                        phoneNumber = response.user.phone_number,
-                        username = response.user.username,
-                        displayName = response.user.display_name,
-                        profileImageId = response.user.profile_image_id,
-                        lastSeen = response.user.last_seen,
-                        isOnline = response.user.is_online,
-                        createdAt = response.user.created_at,
-                        updatedAt = response.user.updated_at
-                    )
-                    database.userDao().insert(userEntity)
-                    
-                    val user = mapToUser(response.user)
-                    _currentUser.value = user
-                    
-                    Result.success(AuthRepository.AuthResult(
-                        user = user,
-                        accessToken = response.access_token,
-                        refreshToken = response.refresh_token,
-                        accessExpiresIn = response.access_expires_in,
-                        refreshExpiresIn = response.refresh_expires_in
-                    ))
-                }
+                persistAuthResult(response)
             }
+        }
+    }
+
+    override suspend fun googleSignIn(
+        idToken: String,
+        deviceName: String,
+        deviceIdentifier: String
+    ): Result<AuthRepository.AuthResult> {
+        return withContext(Dispatchers.IO) {
+            apiService.googleSignIn(com.securechat.data.remote.dto.GoogleSignInRequest(
+                id_token = idToken,
+                device_name = deviceName,
+                device_identifier = deviceIdentifier
+            )).flatMap { response ->
+                persistAuthResult(response)
+            }
+        }
+    }
+
+    private suspend fun persistAuthResult(response: VerifyOtpResponse): Result<AuthRepository.AuthResult> {
+        // Save tokens
+        return tokenStorage.saveTokens(
+            response.access_token,
+            response.refresh_token,
+            response.access_expires_in.toLong()
+        ).flatMap {
+            // Save user to local DB
+            val userEntity = UserEntity(
+                serverId = response.user.id,
+                phoneNumber = response.user.phone_number,
+                username = response.user.username,
+                displayName = response.user.display_name,
+                profileImageId = response.user.profile_image_id,
+                lastSeen = response.user.last_seen,
+                isOnline = response.user.is_online,
+                createdAt = response.user.created_at,
+                updatedAt = response.user.updated_at
+            )
+            database.userDao().insert(userEntity)
+
+            val user = mapToUser(response.user)
+            _currentUser.value = user
+
+            Result.success(AuthRepository.AuthResult(
+                user = user,
+                accessToken = response.access_token,
+                refreshToken = response.refresh_token,
+                accessExpiresIn = response.access_expires_in,
+                refreshExpiresIn = response.refresh_expires_in
+            ))
         }
     }
 

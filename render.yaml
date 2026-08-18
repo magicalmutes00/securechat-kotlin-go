@@ -83,3 +83,6 @@ services:
         value: "50"
       - key: SECURECHAT_CLOUDINARY_MAX_DOCUMENT_MB
         value: "100"
+
+      - key: SECURECHAT_GOOGLE_CLIENT_ID
+        sync: false

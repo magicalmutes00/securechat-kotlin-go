@@ -14,6 +14,7 @@ interface ApiService {
     // Auth
     suspend fun sendOtp(request: SendOtpRequest): Result<SendOtpResponse>
     suspend fun verifyOtp(request: VerifyOtpRequest): Result<VerifyOtpResponse>
+    suspend fun googleSignIn(request: GoogleSignInRequest): Result<VerifyOtpResponse>
     suspend fun refreshToken(request: RefreshTokenRequest): Result<RefreshTokenResponse>
     suspend fun logout(): Result<Unit>
 
@@ -73,6 +74,13 @@ class ApiServiceImpl(
 
     override suspend fun verifyOtp(request: VerifyOtpRequest): Result<VerifyOtpResponse> = executeRequest {
         client.post("$baseUrl/auth/verify-otp") {
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }.body()
+    }
+
+    override suspend fun googleSignIn(request: GoogleSignInRequest): Result<VerifyOtpResponse> = executeRequest {
+        client.post("$baseUrl/auth/google") {
             contentType(ContentType.Application.Json)
             setBody(request)
         }.body()

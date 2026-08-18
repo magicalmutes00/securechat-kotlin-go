@@ -21,7 +21,8 @@ func NewRepository(db *sql.DB) *Repository {
 
 type User struct {
 	ID             int64
-	PhoneNumber    string
+	PhoneNumber    sql.NullString
+	Email          sql.NullString
 	Username       sql.NullString
 	DisplayName    string
 	ProfileImageID sql.NullInt64
@@ -54,10 +55,10 @@ type Session struct {
 func (r *Repository) FindUserByPhone(ctx context.Context, phoneNumber string) (*User, error) {
 	var user User
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, phone_number, username, display_name, profile_image_id, last_seen, is_online, created_at, updated_at
+		SELECT id, phone_number, email, username, display_name, profile_image_id, last_seen, is_online, created_at, updated_at
 		FROM users WHERE phone_number = ?
 	`, phoneNumber).Scan(
-		&user.ID, &user.PhoneNumber, &user.Username, &user.DisplayName,
+		&user.ID, &user.PhoneNumber, &user.Email, &user.Username, &user.DisplayName,
 		&user.ProfileImageID, &user.LastSeen, &user.IsOnline, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
@@ -72,10 +73,10 @@ func (r *Repository) FindUserByPhone(ctx context.Context, phoneNumber string) (*
 func (r *Repository) FindUserByUsername(ctx context.Context, username string) (*User, error) {
 	var user User
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, phone_number, username, display_name, profile_image_id, last_seen, is_online, created_at, updated_at
+		SELECT id, phone_number, email, username, display_name, profile_image_id, last_seen, is_online, created_at, updated_at
 		FROM users WHERE username = ?
 	`, username).Scan(
-		&user.ID, &user.PhoneNumber, &user.Username, &user.DisplayName,
+		&user.ID, &user.PhoneNumber, &user.Email, &user.Username, &user.DisplayName,
 		&user.ProfileImageID, &user.LastSeen, &user.IsOnline, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
@@ -83,6 +84,21 @@ func (r *Repository) FindUserByUsername(ctx context.Context, username string) (*
 			return nil, apperrors.ErrUserNotFound
 		}
 		return nil, fmt.Errorf("failed to find user: %w", err)
+	}
+	return &user, nil
+}
+
+func (r *Repository) FindUserByGoogleSub(ctx context.Context, googleSub string) (*User, error) {
+	var user User
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, phone_number, email, username, display_name, profile_image_id, last_seen, is_online, created_at, updated_at
+		FROM users WHERE google_sub = ?
+	`, googleSub).Scan(
+		&user.ID, &user.PhoneNumber, &user.Email, &user.Username, &user.DisplayName,
+		&user.ProfileImageID, &user.LastSeen, &user.IsOnline, &user.CreatedAt, &user.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
 	}
 	return &user, nil
 }
@@ -98,6 +114,19 @@ func (r *Repository) CreateUser(ctx context.Context, phoneNumber, displayName st
 
 	_, _ = result.LastInsertId()
 	return r.FindUserByPhone(ctx, phoneNumber)
+}
+
+func (r *Repository) CreateGoogleUser(ctx context.Context, googleSub, email, displayName string) (*User, error) {
+	result, err := r.db.ExecContext(ctx, `
+		INSERT INTO users (email, google_sub, display_name, created_at, updated_at)
+		VALUES (?, ?, ?, NOW(), NOW())
+	`, email, googleSub, displayName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create google user: %w", err)
+	}
+
+	id, _ := result.LastInsertId()
+	return r.GetUserByID(ctx, id)
 }
 
 func (r *Repository) CreateDevice(ctx context.Context, userID int64, deviceName, deviceIdentifier, platform string) (*Device, error) {
@@ -285,10 +314,10 @@ func (r *Repository) UpdateUserOnlineStatus(ctx context.Context, userID int64, i
 func (r *Repository) GetUserByID(ctx context.Context, userID int64) (*User, error) {
 	var user User
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, phone_number, username, display_name, profile_image_id, last_seen, is_online, created_at, updated_at
+		SELECT id, phone_number, email, username, display_name, profile_image_id, last_seen, is_online, created_at, updated_at
 		FROM users WHERE id = ?
 	`, userID).Scan(
-		&user.ID, &user.PhoneNumber, &user.Username, &user.DisplayName,
+		&user.ID, &user.PhoneNumber, &user.Email, &user.Username, &user.DisplayName,
 		&user.ProfileImageID, &user.LastSeen, &user.IsOnline, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {

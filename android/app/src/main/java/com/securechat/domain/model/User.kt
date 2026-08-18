@@ -5,7 +5,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class User(
     val id: Long,
-    val phoneNumber: String,
+    val phoneNumber: String?,
     val username: String?,
     val displayName: String,
     val profileImageId: Long?,
@@ -28,7 +28,7 @@ data class User(
 
     data class Builder(
         val id: Long,
-        val phoneNumber: String,
+        val phoneNumber: String?,
         var username: String? = null,
         var displayName: String,
         var profileImageId: Long? = null,

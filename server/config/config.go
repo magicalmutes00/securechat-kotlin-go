@@ -11,6 +11,7 @@ type Config struct {
 	MySQL    MySQLConfig
 	JWT      JWTConfig
 	OTP      OTPConfig
+	Google   GoogleConfig
 	Cloudinary CloudinaryConfig
 	Ollama   OllamaConfig
 	Logger   LoggerConfig
@@ -52,6 +53,10 @@ type OTPConfig struct {
 	TwilioAccountSID string
 	TwilioAuthToken  string
 	TwilioFromNumber string
+}
+
+type GoogleConfig struct {
+	ClientID string
 }
 
 type CloudinaryConfig struct {
@@ -159,6 +164,8 @@ func Load() (*Config, error) {
 	cfg.OTP.TwilioAccountSID = viper.GetString("securechat_otp_twilio_account_sid")
 	cfg.OTP.TwilioAuthToken = viper.GetString("securechat_otp_twilio_auth_token")
 	cfg.OTP.TwilioFromNumber = viper.GetString("securechat_otp_twilio_from_number")
+
+	cfg.Google.ClientID = viper.GetString("securechat_google_client_id")
 
 	cfg.Cloudinary.CloudName = viper.GetString("securechat_cloudinary_cloud_name")
 	cfg.Cloudinary.APIKey = viper.GetString("securechat_cloudinary_api_key")
