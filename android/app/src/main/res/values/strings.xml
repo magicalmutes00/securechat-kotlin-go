@@ -1,0 +1,74 @@
+<resources>
+    <string name="app_name">SecureChat</string>
+
+    <!-- Auth -->
+    <string name="phone_login_title">Welcome to SecureChat</string>
+    <string name="phone_login_subtitle">Enter your phone number to get started</string>
+    <string name="phone_hint">Phone Number</string>
+    <string name="phone_helper_text">Include country code (e.g., +1 555 123 4567)</string>
+    <string name="continue_button">Continue</string>
+    <string name="sending_otp">Sending OTP…</string>
+
+    <string name="otp_title">Enter OTP</string>
+    <string name="otp_subtitle">We sent a 6-digit code to %s</string>
+    <string name="otp_hint">Enter code</string>
+    <string name="verify_button">Verify</string>
+    <string name="resend_otp">Resend OTP</string>
+    <string name="resend_in">Resend in %ds</string>
+    <string name="verifying">Verifying…</string>
+
+    <string name="profile_setup_title">Set up your profile</string>
+    <string name="display_name_hint">Display Name</string>
+    <string name="username_hint">Username (optional)</string>
+    <string name="complete_setup">Complete Setup</string>
+    <string name="skip_for_now">Skip for now</string>
+
+    <!-- Chat -->
+    <string name="chat_input_hint">Message</string>
+    <string name="send_button">Send</string>
+    <string name="type_message">Type a message…</string>
+    <string name="no_messages">No messages yet. Start the conversation!</string>
+    <string name="message_failed">Failed to send. Tap to retry.</string>
+    <string name="message_sending">Sending…</string>
+    <string name="message_delivered">Delivered</string>
+    <string name="message_read">Read</string>
+
+    <!-- Media -->
+    <string name="attach_image">Image</string>
+    <string name="attach_video">Video</string>
+    <string name="attach_audio">Audio</string>
+    <string name="attach_document">Document</string>
+    <string name="uploading">Uploading… %d%%</string>
+    <string name="download">Download</string>
+    <string name="downloading">Downloading… %d%%</string>
+
+    <!-- Errors -->
+    <string name="error_network">Network error. Please check your connection.</string>
+    <string name="error_unknown">An unexpected error occurred.</string>
+    <string name="error_otp_invalid">Invalid or expired OTP. Please try again.</string>
+    <string name="error_otp_max_attempts">Too many attempts. Please request a new OTP.</string>
+    <string name="error_file_too_large">File exceeds size limit (%s).</string>
+    <string name="error_upload_failed">Upload failed. Please try again.</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="profile_title">Profile</string>
+    <string name="storage_title">Storage</string>
+    <string name="sessions_title">Active Sessions</string>
+    <string name="about_title">About SecureChat</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="theme_system">System Default</string>
+    <string name="language">Language</string>
+    <string name="logout">Logout</string>
+    <string name="logout_all">Logout All Devices</string>
+
+    <!-- Common -->
+    <string name="retry">Retry</string>
+    <string name="cancel">Cancel</string>
+    <string name="ok">OK</string>
+    <string name="delete">Delete</string>
+    <string name="edit">Edit</string>
+    <string name="save">Save</string>
+    <string name="loading">Loading…</string>
+</resources>

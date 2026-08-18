@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Server Configuration - update after creating the Render service.
+         Render URL format: https://<service-name>.onrender.com -->
+    <string name="server_base_url" translatable="false">https://securechat-api.onrender.com/api/v1</string>
+    <string name="server_ws_url" translatable="false">wss://securechat-api.onrender.com/ws</string>
+    
+    <!-- Media Limits (in bytes) -->
+    <integer name="max_image_size_mb">20</integer>
+    <integer name="max_video_size_mb">500</integer>
+    <integer name="max_audio_size_mb">50</integer>
+    <integer name="max_document_size_mb">100</integer>
+    
+    <!-- Feature Flags -->
+    <bool name="enable_ai_features">false</bool>
+    <bool name="enable_debug_menu">true</bool>
+</resources>

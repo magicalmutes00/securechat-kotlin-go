@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Exclude sensitive data from backup -->
+    <exclude domain="sharedpref" path="securechat_prefs.xml" />
+    <exclude domain="sharedpref" path="EncryptedPreferences.xml" />
+    <exclude domain="database" path="securechat.db" />
+    <exclude domain="database" path="securechat.db-shm" />
+    <exclude domain="database" path="securechat.db-wal" />
+    <exclude domain="file" path="keystore" />
+</full-backup-content>

@@ -1,0 +1,94 @@
+# SecureChat - Git Ignore Rules
+
+# ============================================
+# IDE & Editor
+# ============================================
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+
+# ============================================
+# OS
+# ============================================
+.DS_Store
+Thumbs.db
+
+# ============================================
+# Environment & Secrets
+# ============================================
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+secrets/
+
+# Generated key material (never commit)
+keys.txt
+newkeys.txt
+*_keys.txt
+*keys*.txt
+generated_keys.txt
+server/genkeys_output.txt
+server/keys.txt
+server/newkeys.txt
+
+# ============================================
+# Android
+# ============================================
+android/app/build/
+android/app/.cxx/
+android/app/release/
+android/app/debug/
+android/.gradle/
+android/gradle/wrapper/gradle-wrapper.jar
+android/local.properties
+android/*.keystore
+android/*.jks
+android/keystore.properties
+android/captures/
+android/hs_err_pid*.log
+android/replay_pid*.log
+
+# ============================================
+# Go
+# ============================================
+server/bin/
+server/vendor/
+server/*.exe
+server/*.test
+server/coverage.out
+server/go.work
+
+# ============================================
+# Database
+# ============================================
+*.dump
+*.sqlite
+# Note: migrations/*.sql are committed — goose applies them at startup
+
+# ============================================
+# Logs
+# ============================================
+*.log
+logs/
+
+# ============================================
+# Build Artifacts
+# ============================================
+dist/
+build/
+out/
+*.aar
+*.apk
+*.aab
+
+# ============================================
+# Testing
+# ============================================
+.coverage/
+*.profraw

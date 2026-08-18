@@ -1,0 +1,85 @@
+services:
+  - type: web
+    name: securechat-api
+    runtime: go
+    rootDir: server
+    plan: free
+    buildCommand: go build -o bin/server ./cmd/server
+    startCommand: ./bin/server
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: SECURECHAT_SERVER_HOST
+        value: 0.0.0.0
+      - key: SECURECHAT_ENVIRONMENT
+        value: production
+      - key: SECURECHAT_LOG_LEVEL
+        value: info
+      - key: SECURECHAT_LOG_FORMAT
+        value: json
+
+      - key: SECURECHAT_MYSQL_HOST
+        sync: false
+      - key: SECURECHAT_MYSQL_PORT
+        value: "4000"
+      - key: SECURECHAT_MYSQL_DATABASE
+        value: securechat
+      - key: SECURECHAT_MYSQL_USER
+        sync: false
+      - key: SECURECHAT_MYSQL_PASSWORD
+        sync: false
+      - key: SECURECHAT_MYSQL_TLS
+        value: "true"
+      - key: SECURECHAT_MYSQL_MAX_OPEN_CONNS
+        value: "10"
+      - key: SECURECHAT_MYSQL_MAX_IDLE_CONNS
+        value: "5"
+      - key: SECURECHAT_MYSQL_CONN_MAX_LIFETIME
+        value: "300"
+
+      - key: SECURECHAT_JWT_ACCESS_SECRET
+        sync: false
+      - key: SECURECHAT_JWT_REFRESH_SECRET
+        sync: false
+      - key: SECURECHAT_JWT_ACCESS_TTL
+        value: "900"
+      - key: SECURECHAT_JWT_REFRESH_TTL
+        value: "2592000"
+      - key: SECURECHAT_JWT_ISSUER
+        value: securechat
+      - key: SECURECHAT_JWT_AUDIENCE
+        value: securechat-android
+
+      - key: SECURECHAT_OTP_PROVIDER
+        value: twilio
+      - key: SECURECHAT_OTP_LENGTH
+        value: "6"
+      - key: SECURECHAT_OTP_TTL
+        value: "300"
+      - key: SECURECHAT_OTP_MAX_ATTEMPTS
+        value: "5"
+      - key: SECURECHAT_OTP_RESEND_COOLDOWN
+        value: "60"
+      - key: SECURECHAT_OTP_TWILIO_ACCOUNT_SID
+        sync: false
+      - key: SECURECHAT_OTP_TWILIO_AUTH_TOKEN
+        sync: false
+      - key: SECURECHAT_OTP_TWILIO_FROM_NUMBER
+        sync: false
+
+      - key: SECURECHAT_CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: SECURECHAT_CLOUDINARY_API_KEY
+        sync: false
+      - key: SECURECHAT_CLOUDINARY_API_SECRET
+        sync: false
+      - key: SECURECHAT_CLOUDINARY_UPLOAD_FOLDER
+        value: securechat
+      - key: SECURECHAT_CLOUDINARY_MAX_IMAGE_MB
+        value: "20"
+      - key: SECURECHAT_CLOUDINARY_MAX_VIDEO_MB
+        value: "500"
+      - key: SECURECHAT_CLOUDINARY_MAX_AUDIO_MB
+        value: "50"
+      - key: SECURECHAT_CLOUDINARY_MAX_DOCUMENT_MB
+        value: "100"
