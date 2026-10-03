@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"regexp"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/securechat/server/config"
@@ -50,9 +51,17 @@ type SendOTPResponse struct {
 	ResendCooldown int `json:"resend_cooldown"`
 }
 
+// e164Pattern enforces the struct tags' `validate:"required,e164"` contract —
+// no validator library is wired, so handlers check input explicitly to keep
+// malformed payloads out of the DB/provider path.
+var e164Pattern = regexp.MustCompile(`^\+[1-9]\d{1,14}$`)
+
 func (h *Handler) SendOTP(c *fiber.Ctx) error {
 	var req SendOTPRequest
 	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(apperrors.NewErrorResponse(apperrors.ErrInvalidRequest))
+	}
+	if !e164Pattern.MatchString(req.PhoneNumber) {
 		return c.Status(400).JSON(apperrors.NewErrorResponse(apperrors.ErrInvalidRequest))
 	}
 
@@ -101,6 +110,12 @@ func (h *Handler) VerifyOTP(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(apperrors.NewErrorResponse(apperrors.ErrInvalidRequest))
 	}
+	if !e164Pattern.MatchString(req.PhoneNumber) ||
+		len(req.OTP) != 6 ||
+		req.DeviceName == "" || len(req.DeviceName) > 100 ||
+		req.DeviceIdentifier == "" || len(req.DeviceIdentifier) > 255 {
+		return c.Status(400).JSON(apperrors.NewErrorResponse(apperrors.ErrInvalidRequest))
+	}
 
 	result, err := h.service.VerifyOTP(c.Context(), req.PhoneNumber, req.OTP, req.DeviceName, req.DeviceIdentifier)
 	if err != nil {
@@ -140,6 +155,11 @@ type GoogleAuthRequest struct {
 func (h *Handler) GoogleAuth(c *fiber.Ctx) error {
 	var req GoogleAuthRequest
 	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(apperrors.NewErrorResponse(apperrors.ErrInvalidRequest))
+	}
+	if req.IDToken == "" ||
+		req.DeviceName == "" || len(req.DeviceName) > 100 ||
+		req.DeviceIdentifier == "" || len(req.DeviceIdentifier) > 255 {
 		return c.Status(400).JSON(apperrors.NewErrorResponse(apperrors.ErrInvalidRequest))
 	}
 
@@ -191,6 +211,9 @@ type RefreshResponse struct {
 func (h *Handler) RefreshToken(c *fiber.Ctx) error {
 	var req RefreshRequest
 	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(apperrors.NewErrorResponse(apperrors.ErrInvalidRequest))
+	}
+	if req.RefreshToken == "" {
 		return c.Status(400).JSON(apperrors.NewErrorResponse(apperrors.ErrInvalidRequest))
 	}
 
