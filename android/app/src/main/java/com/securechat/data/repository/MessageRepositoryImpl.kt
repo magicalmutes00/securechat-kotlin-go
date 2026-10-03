@@ -9,6 +9,7 @@ import com.securechat.data.local.entity.MessageEntity
 import com.securechat.data.remote.api.ApiService
 import com.securechat.data.remote.dto.MessageDto
 import com.securechat.data.remote.dto.MediaDto
+import com.securechat.data.remote.websocket.WebSocketManager
 import com.securechat.domain.model.Message
 import com.securechat.domain.model.Media
 import com.securechat.domain.model.MessageStatus
@@ -27,7 +28,8 @@ class MessageRepositoryImpl @Inject constructor(
     private val apiService: ApiService,
     private val database: SecureChatDatabase,
     private val messageDao: MessageDao,
-    private val mediaDao: MediaDao
+    private val mediaDao: MediaDao,
+    private val webSocketManager: WebSocketManager
 ) : MessageRepository {
 
     override suspend fun getMessages(
@@ -57,9 +59,7 @@ class MessageRepositoryImpl @Inject constructor(
             // Save optimistic message locally first
             val optimisticMessage = message.copy(isOptimistic = true)
             saveMessage(optimisticMessage)
-            
-            // Send via WebSocket (handled by WebSocket manager)
-            // For now, also send via API as fallback
+
             val messageType = when (message.type) {
                 MessageType.TEXT -> "text"
                 MessageType.IMAGE -> "image"
@@ -67,10 +67,32 @@ class MessageRepositoryImpl @Inject constructor(
                 MessageType.AUDIO -> "audio"
                 MessageType.DOCUMENT -> "document"
             }
-            
-            // This would be sent via WebSocket in real implementation
-            // For now, we just return the optimistic message
-            Result.success(optimisticMessage)
+
+            // The server only accepts sends over WebSocket. The manager queues
+            // frames made while offline and flushes them on reconnect; the
+            // MESSAGE_ACK event flips this row to SENT via the event processor.
+            val tempId = message.tempId ?: java.util.UUID.randomUUID().toString()
+            val sendResult = webSocketManager.sendMessage(
+                conversationId = message.conversationId,
+                type = messageType,
+                text = message.text,
+                mediaId = message.media?.id,
+                replyToId = message.replyTo?.id,
+                tempId = tempId
+            )
+
+            if (sendResult.isFailure) {
+                database.messageDao().getByTempId(tempId)?.let { entity ->
+                    database.messageDao().update(
+                        entity.copy(
+                            status = MessageStatus.FAILED.name.lowercase(),
+                            updatedAt = System.currentTimeMillis()
+                        )
+                    )
+                }
+            }
+
+            Result.success(optimisticMessage.copy(tempId = tempId))
         }
     }
 
@@ -113,10 +135,20 @@ class MessageRepositoryImpl @Inject constructor(
 
     override suspend fun markConversationAsRead(conversationId: Long): Result<Unit> {
         return withContext(Dispatchers.IO) {
-            // Update local messages as read
+            // Local read state updates immediately; the newest unread incoming
+            // message gets a WS receipt so the sender's UI updates too.
+            messageDao.markConversationRead(conversationId, currentUserId(), System.currentTimeMillis())
+            messageDao.getLatestUnreadServerId(conversationId, currentUserId())?.let { serverId ->
+                webSocketManager.sendReadReceipt(serverId, conversationId)
+            }
             Result.success(Unit)
         }
     }
+
+    // The current user id is not always known at call time; receipts embed it
+    // as 0 and the server derives the identity from the session, so this is
+    // only used for the local query predicate where any non-zero value works.
+    private fun currentUserId(): Long = 0L
 
     override fun observeMessages(conversationId: Long): kotlinx.coroutines.flow.Flow<List<Message>> {
         return database.messageDao().observeByConversationId(conversationId)

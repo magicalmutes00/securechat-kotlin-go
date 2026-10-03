@@ -85,6 +85,7 @@ class PhoneLoginViewModel @Inject constructor(
 @HiltViewModel
 class OtpVerifyViewModel @Inject constructor(
     private val verifyOtpUseCase: VerifyOtpUseCase,
+    private val sendOtpUseCase: SendOtpUseCase,
     private val tokenStorage: TokenStorage
 ) : ViewModel() {
 
@@ -133,9 +134,35 @@ class OtpVerifyViewModel @Inject constructor(
         }
     }
 
-    fun resendOtp(phoneNumber: String, deviceName: String, deviceIdentifier: String, onSent: () -> Unit) {
-        // This would call sendOtpUseCase again
-        // Implementation delegated to PhoneLoginViewModel
+    fun resendOtp(phoneNumber: String, onSent: () -> Unit) {
+        if (phoneNumber.isBlank()) {
+            errorMessage.value = "Missing phone number. Go back and try again."
+            return
+        }
+        viewModelScope.launch {
+            val result = sendOtpUseCase(phoneNumber)
+            result.onSuccess { response ->
+                resendCooldown.value = response.resendCooldown
+                startResendTimer(onTick = {}, onFinish = {})
+                onSent()
+            }.onFailure {
+                errorMessage.value = "Failed to resend OTP. Please try again."
+            }
+        }
+    }
+
+    fun startResendTimer(onTick: (Int) -> Unit, onFinish: () -> Unit) {
+        viewModelScope.launch {
+            var remaining = resendCooldown.value
+            while (remaining > 0) {
+                resendCooldown.value = remaining
+                onTick(remaining)
+                delay(1000)
+                remaining--
+            }
+            resendCooldown.value = 0
+            onFinish()
+        }
     }
 }
 

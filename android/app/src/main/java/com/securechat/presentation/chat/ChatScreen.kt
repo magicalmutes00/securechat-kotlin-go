@@ -48,10 +48,9 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.unit.height
-import androidx.compose.ui.unit.width
 import com.securechat.R
 import com.securechat.core.utils.formatTimestamp
+import com.securechat.core.utils.UserSession
 import com.securechat.domain.model.Message
 import com.securechat.domain.model.MessageStatus
 import com.securechat.domain.model.MessageType
@@ -65,12 +64,12 @@ fun ChatScreen(
     otherUserAvatar: String?,
     onBack: () -> Unit
 ) {
-    val viewModel = androidx.lifecycle.viewmodel.compose.viewModel<ChatViewModel>()
+    val viewModel: ChatViewModel = androidx.hilt.navigation.compose.hiltViewModel()
     var messageText by remember { mutableStateOf("") }
-    
-    // Initialize view model
-    androidx.lifecycle.viewmodel.compose.viewModel<ChatViewModel>().apply {
-        // Would need current user ID from auth state
+
+    // Load history and mark the conversation read once per conversation entry.
+    androidx.compose.runtime.LaunchedEffect(conversationId) {
+        viewModel.initialize(conversationId, UserSession.currentUserId)
     }
 
     Column(modifier = Modifier.fillMaxSize()) {

@@ -68,19 +68,21 @@ abstract class SecureChatDatabase : RoomDatabase() {
                     SecureChatDatabase::class.java,
                     "securechat.db"
                 )
-                    .fallbackToDestructiveMigration() // For development only
+                    .addMigrations(MIGRATION_1_2)
                     .build()
                 INSTANCE = instance
                 instance
             }
         }
 
-        // Future migrations will be added here
-        // Example migration from version 1 to 2:
-        // val MIGRATION_1_2 = object : Migration(1, 2) {
-        //     override fun migrate(database: SupportSQLiteDatabase) {
-        //         // Add migration SQL here
-        //     }
-        // }
+        // Version 2's schema is identical to version 1 (the bump only
+        // registered the exported schema), so this migration is a no-op kept
+        // for version continuity. Destructive migration is deliberately not
+        // enabled: user data must survive app updates.
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // No schema change between versions 1 and 2.
+            }
+        }
     }
 }

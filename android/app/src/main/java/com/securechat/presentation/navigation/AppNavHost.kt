@@ -1,17 +1,20 @@
 package com.securechat.presentation.navigation
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.securechat.MainViewModel
 import com.securechat.presentation.auth.AuthScreen
 import com.securechat.presentation.auth.OtpVerifyScreen
@@ -19,6 +22,7 @@ import com.securechat.presentation.auth.ProfileSetupScreen
 import com.securechat.presentation.chat.ChatScreen
 import com.securechat.presentation.contacts.ContactsScreen
 import com.securechat.presentation.home.HomeScreen
+import com.securechat.presentation.home.HomeViewModel
 import com.securechat.presentation.media.DocumentViewerScreen
 import com.securechat.presentation.media.MediaViewerScreen
 import com.securechat.presentation.profile.ProfileScreen
@@ -34,35 +38,72 @@ fun AppNavHost(
 ) {
     val navController = rememberNavController()
     val mainViewModel = hiltViewModel<MainViewModel>()
-    var authState by remember {
-        mutableStateOf<MainViewModel.AuthState>(MainViewModel.AuthState.Unknown)
-    }
+    val authState by mainViewModel.authState.collectAsState()
 
-    LaunchedEffect(mainViewModel) {
-        mainViewModel.observeAuthState { state ->
-            authState = state
+    // Gate the whole graph on auth state: signed-in users land on home,
+    // signed-out users on auth, and the unknown state shows a splash.
+    LaunchedEffect(authState) {
+        val currentRoute = navController.currentBackStackEntry?.destination?.route
+        when (authState) {
+            is MainViewModel.AuthState.Authenticated -> {
+                if (currentRoute == "splash" || currentRoute == "auth" || currentRoute == "otp") {
+                    navController.navigate("home") {
+                        popUpTo(0) { inclusive = true }
+                    }
+                }
+            }
+            is MainViewModel.AuthState.Unauthenticated -> {
+                if (currentRoute != "auth" && currentRoute != "splash") {
+                    navController.navigate("auth") { popUpTo(0) { inclusive = true } }
+                } else if (currentRoute == "splash") {
+                    navController.navigate("auth") { popUpTo("splash") { inclusive = true } }
+                }
+            }
+            is MainViewModel.AuthState.Unknown -> Unit
         }
     }
 
-    NavHost(navController, startDestination = "auth") {
+    NavHost(navController, startDestination = "splash") {
+        composable("splash") {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        }
+
         composable("auth") {
-            AuthScreen(onAuthSuccess = onAuthSuccess)
+            AuthScreen(
+                onAuthSuccess = onAuthSuccess,
+                onOtpSent = { phone ->
+                    val deviceName = android.os.Build.MODEL
+                    navController.navigate("otp?phone=$phone&deviceName=$deviceName") {
+                        popUpTo("auth") { inclusive = true }
+                    }
+                }
+            )
         }
 
-        composable("otp") {
+        composable(
+            route = "otp?phone={phone}&deviceName={deviceName}",
+            arguments = listOf(
+                navArgument("phone") { type = NavType.StringType; defaultValue = "" },
+                navArgument("deviceName") { type = NavType.StringType; defaultValue = "" }
+            )
+        ) { entry ->
             OtpVerifyScreen(
-                phoneNumber = "",
-                deviceName = "",
-                deviceIdentifier = "",
-                onVerifySuccess = { navController.navigate("profile") { popUpTo("auth") { inclusive = true } } },
+                phoneNumber = entry.arguments?.getString("phone") ?: "",
+                deviceName = entry.arguments?.getString("deviceName") ?: "",
+                deviceIdentifier = com.securechat.core.utils.DeviceInfo.deviceIdentifier(navController.context),
+                onVerifySuccess = {
+                    navController.navigate("profile") { popUpTo("auth") { inclusive = true } }
+                },
                 onResendOtp = { /* Handled in screen */ }
             )
         }
 
         composable("profile") {
             ProfileSetupScreen(
-                onComplete = { navController.navigate("home") { popUpTo("auth") { inclusive = true } } },
-                onSkip = { navController.navigate("home") { popUpTo("auth") { inclusive = true } } }
+                onComplete = { navController.navigate("home") { popUpTo(0) { inclusive = true } } },
+                onSkip = { navController.navigate("home") { popUpTo(0) { inclusive = true } } }
             )
         }
 
@@ -70,25 +111,53 @@ fun AppNavHost(
             HomeScreen(
                 onLogout = onLogout,
                 onNewChat = { navController.navigate("contacts") },
-                onSettings = { navController.navigate("settings") }
+                onSettings = { navController.navigate("settings") },
+                onConversationClick = { conversationId, otherUserName ->
+                    navController.navigate("conversation/$conversationId?name=${android.net.Uri.encode(otherUserName)}")
+                }
             )
         }
 
         composable(
-            route = "conversation/{conversationId}",
-            arguments = listOf(androidx.navigation.navArgument("conversationId") { type = NavType.LongType })
-        ) {
-            val conversationId = navController.currentBackStackEntry
-                ?.arguments?.getLong("conversationId") ?: 0L
-            if (authState is MainViewModel.AuthState.Authenticated) {
-                ChatScreen(
-                    conversationId = conversationId,
-                    otherUserName = "Contact", // Would come from conversation data
-                    otherUserAvatar = null,
-                    onBack = { navController.popBackStack() }
-                )
-            } else {
-                navController.navigate("auth") { popUpTo("auth") { inclusive = true } }
+            route = "conversation/{conversationId}?name={name}",
+            arguments = listOf(
+                navArgument("conversationId") { type = NavType.LongType },
+                navArgument("name") { type = NavType.StringType; defaultValue = "Chat" }
+            )
+        ) { entry ->
+            val conversationId = entry.arguments?.getLong("conversationId") ?: 0L
+            ChatScreen(
+                conversationId = conversationId,
+                otherUserName = entry.arguments?.getString("name") ?: "Chat",
+                otherUserAvatar = null,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(
+            route = "conversation/new?phone={phone}",
+            arguments = listOf(
+                navArgument("phone") { type = NavType.StringType; defaultValue = "" }
+            )
+        ) { entry ->
+            val phone = entry.arguments?.getString("phone") ?: ""
+            val homeViewModel = hiltViewModel<HomeViewModel>()
+            androidx.compose.runtime.LaunchedEffect(phone) {
+                if (phone.isNotBlank()) {
+                    homeViewModel.createNewConversation(phone) { conversation ->
+                        // Pop this placeholder route so back returns to the list.
+                        navController.navigate(
+                            "conversation/${conversation.id}?name=${android.net.Uri.encode(conversation.getDisplayName(0))}"
+                        ) {
+                            popUpTo("conversation/new?phone={phone}") { inclusive = true }
+                        }
+                    }
+                } else {
+                    navController.popBackStack()
+                }
+            }
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
             }
         }
 
@@ -138,7 +207,7 @@ fun AppNavHost(
         composable(
             route = "media/viewer",
             arguments = listOf(
-                androidx.navigation.navArgument("media") { type = NavType.StringType } // JSON serialized media
+                navArgument("media") { type = NavType.StringType } // JSON serialized media
             )
         ) {
             // MediaViewerScreen(
@@ -151,7 +220,7 @@ fun AppNavHost(
         composable(
             route = "document/viewer",
             arguments = listOf(
-                androidx.navigation.navArgument("media") { type = NavType.StringType }
+                navArgument("media") { type = NavType.StringType }
             )
         ) {
             // DocumentViewerScreen(
@@ -160,16 +229,6 @@ fun AppNavHost(
             //     onDownload = { /* Handle download */ },
             //     onShare = { /* Handle share */ }
             // )
-        }
-
-        // New conversation flow
-        composable(
-            route = "conversation/new",
-            arguments = listOf(
-                androidx.navigation.navArgument("phone") { type = NavType.StringType }
-            )
-        ) {
-            // This would create a conversation and navigate to chat
         }
     }
 }

@@ -39,7 +39,10 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import kotlinx.coroutines.launch
 
 @Composable
-fun AuthScreen(onAuthSuccess: () -> Unit) {
+fun AuthScreen(
+    onAuthSuccess: () -> Unit,
+    onOtpSent: (phoneNumber: String) -> Unit
+) {
     val context = LocalContext.current
     val phoneViewModel = hiltViewModel<PhoneLoginViewModel>()
     val googleViewModel = hiltViewModel<GoogleLoginViewModel>()
@@ -163,24 +166,28 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
 
         Button(
             onClick = {
-                if (phoneNumber.isNotBlank()) {
-                    isLoading = true
-                    // TODO: Call send OTP use case
-                    // For now, simulate success
-                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                        isLoading = false
-                        onAuthSuccess()
-                    }, 1000)
-                }
+                phoneViewModel.onPhoneNumberChanged(phoneNumber)
+                phoneViewModel.sendOtp(
+                    onSuccess = { onOtpSent(phoneNumber.trim()) }
+                )
             },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-            enabled = phoneNumber.isNotBlank() && !isLoading
+            enabled = phoneNumber.isNotBlank() && !phoneViewModel.isLoading.value
         ) {
-            if (isLoading) {
+            if (phoneViewModel.isLoading.value) {
                 CircularProgressIndicator()
             } else {
                 Text("Continue")
             }
+        }
+
+        phoneViewModel.errorMessage.value?.let { error ->
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = error,
+                fontSize = 14.sp,
+                color = androidx.compose.material3.MaterialTheme.colorScheme.error
+            )
         }
     }
 }

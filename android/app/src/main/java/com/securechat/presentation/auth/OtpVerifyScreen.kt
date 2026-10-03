@@ -39,9 +39,9 @@ fun OtpVerifyScreen(
     onVerifySuccess: () -> Unit,
     onResendOtp: () -> Unit
 ) {
-    val viewModel = androidx.lifecycle.viewmodel.compose.viewModel<OtpVerifyViewModel>()
+    val viewModel = androidx.hilt.navigation.compose.hiltViewModel<OtpVerifyViewModel>()
     var otp by remember { mutableStateOf("") }
-    
+
     // Format OTP as user types (add space after 3 digits)
     val formattedOtp = FormatOtp.format(otp)
 
@@ -123,7 +123,9 @@ fun OtpVerifyScreen(
             )
         } else {
             TextButton(
-                onClick = onResendOtp,
+                onClick = {
+                    viewModel.resendOtp(phoneNumber) { onResendOtp() }
+                },
                 enabled = !viewModel.isLoading.value
             ) {
                 Text("Resend OTP")

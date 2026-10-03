@@ -57,4 +57,19 @@ interface MessageDao {
 
     @Query("DELETE FROM messages")
     suspend fun deleteAll(): Int
+
+    @Query("UPDATE messages SET status = 'delivered', deliveredAt = :deliveredAt, updatedAt = :deliveredAt WHERE serverId = :serverId AND deliveredAt IS NULL")
+    suspend fun markDeliveredByServerId(serverId: Long, deliveredAt: Long): Int
+
+    @Query("UPDATE messages SET status = 'read', readAt = :readAt, updatedAt = :readAt WHERE serverId = :serverId AND readAt IS NULL")
+    suspend fun markReadByServerId(serverId: Long, readAt: Long): Int
+
+    @Query("UPDATE messages SET deletedAt = :deletedAt, updatedAt = :deletedAt WHERE serverId = :serverId")
+    suspend fun markDeletedByServerId(serverId: Long, deletedAt: Long): Int
+
+    @Query("UPDATE messages SET status = 'read', readAt = :readAt WHERE conversationId = :conversationId AND senderId != :currentUserId AND readAt IS NULL AND deletedAt IS NULL")
+    suspend fun markConversationRead(conversationId: Long, currentUserId: Long, readAt: Long): Int
+
+    @Query("SELECT serverId FROM messages WHERE conversationId = :conversationId AND senderId != :currentUserId AND status != 'read' AND deletedAt IS NULL AND serverId IS NOT NULL ORDER BY createdAt DESC LIMIT 1")
+    suspend fun getLatestUnreadServerId(conversationId: Long, currentUserId: Long): Long?
 }

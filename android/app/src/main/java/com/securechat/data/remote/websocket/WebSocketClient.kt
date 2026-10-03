@@ -1,13 +1,15 @@
 package com.securechat.data.remote.websocket
 
 import com.securechat.core.common.Result
-import com.securechat.data.remote.dto.*
+import com.securechat.data.remote.dto.ConversationDto
+import com.securechat.data.remote.dto.MessageDto
 import io.ktor.client.*
 import io.ktor.client.plugins.websocket.*
 import io.ktor.http.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.*
+import kotlinx.coroutines.flow.*
 import kotlinx.serialization.*
 import kotlinx.serialization.json.*
 import java.util.concurrent.atomic.AtomicBoolean
@@ -73,14 +75,6 @@ sealed interface WsEvent {
     @Serializable
     @SerialName("ERROR")
     data class Error(val payload: ErrorPayload) : WsEvent
-
-    @Serializable
-    @SerialName("PING")
-    data object Ping : WsEvent
-
-    @Serializable
-    @SerialName("PONG")
-    data object Pong : WsEvent
 }
 
 @Serializable data class AuthPayload(val access_token: String)
@@ -116,83 +110,128 @@ sealed interface WsEvent {
     val conversation_id: Long,
     val deleted_by: Long
 )
-@Serializable data class TypingPayload(val conversation_id: Long)
-@Serializable data class UserPresencePayload(val user_id: Long, val last_seen: Long?)
+@Serializable data class TypingPayload(val conversation_id: Long, val user_id: Long? = null)
+@Serializable data class UserPresencePayload(val user_id: Long, val is_online: Boolean? = null, val last_seen: Long? = null)
 @Serializable data class ConversationUpdatedPayload(val conversation: ConversationDto)
 @Serializable data class ErrorPayload(val code: String, val message: String)
 
-class WebSocketClient(
+/**
+ * Owns the single WebSocket connection lifecycle: a connection loop with
+ * exponential backoff, the in-band AUTHENTICATE handshake the server requires,
+ * and fan-out of incoming events. Outgoing events are queued in a channel and
+ * flushed by the in-session writer, so sends made while offline are delivered
+ * on reconnect. Consumers observe [events] and [state].
+ */
+class WebSocketManager(
     private val client: HttpClient,
     private val wsUrl: String,
     private val tokenProvider: () -> String?
 ) {
-    private var session: DefaultWebSocketSession? = null
-    private val isConnected = AtomicBoolean(false)
-    private var reconnectJob: Job? = null
-    private val eventChannel = Channel<WsEvent>(Channel.UNLIMITED)
+    enum class ConnectionState { DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING }
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val json = Json { ignoreUnknownKeys = true }
+    private val outboundQueue = Channel<WsEvent>(Channel.UNLIMITED)
+    private val _events = MutableSharedFlow<WsEvent>(extraBufferCapacity = 256)
+    private val _state = MutableStateFlow(ConnectionState.DISCONNECTED)
+    private val started = AtomicBoolean(false)
+    private val sessionActive = AtomicBoolean(false)
+    private var connectionJob: Job? = null
 
-    val events: ReceiveChannel<WsEvent> = eventChannel
+    val events: SharedFlow<WsEvent> = _events.asSharedFlow()
+    val state: StateFlow<ConnectionState> = _state.asStateFlow()
+    val connected: Boolean
+        get() = sessionActive.get()
 
-    suspend fun connect(): Result<Unit> {
-        return try {
-            if (isConnected.get()) {
-                Result.success(Unit)
-            } else {
-                val token = tokenProvider() ?: return Result.failure(IllegalStateException("No auth token"))
+    /**
+     * Starts the connection loop. Idempotent: once started, the manager keeps
+     * the connection alive (with backoff) until [disconnect] is called.
+     */
+    fun start() {
+        if (started.getAndSet(true)) return
+        connectionJob = scope.launch { connectionLoop() }
+    }
 
-                client.webSocket(
-                    urlString = wsUrl,
-                    request = {
-                        headers.append(HttpHeaders.Authorization, "Bearer $token")
-                    }
-                ) {
-                    session = this
-                    isConnected.set(true)
-                    handleIncoming(this)
-                }
-                Result.success(Unit)
+    private suspend fun connectionLoop() {
+        var backoffMs = 0L
+        while (currentCoroutineContext().isActive) {
+            if (backoffMs > 0) delay(backoffMs)
+
+            val token = tokenProvider()
+            if (token == null) {
+                _state.value = ConnectionState.DISCONNECTED
+                backoffMs = 5_000L
+                continue
             }
-        } catch (e: Exception) {
-            isConnected.set(false)
-            Result.failure(e)
+
+            _state.value = if (backoffMs > 0) ConnectionState.RECONNECTING else ConnectionState.CONNECTING
+            try {
+                runSession(token)
+                backoffMs = if (backoffMs == 0L) 1_000L else minOf(backoffMs * 2, 30_000L)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                backoffMs = if (backoffMs == 0L) 1_000L else minOf(backoffMs * 2, 30_000L)
+            }
         }
     }
 
-    private suspend fun handleIncoming(session: DefaultWebSocketSession) {
-        try {
-            for (frame in session.incoming) {
-                when (frame) {
-                    is Frame.Text -> {
-                        try {
-                            val event = json.decodeFromString(WsEvent.serializer(), frame.readText())
-                            eventChannel.send(event)
-                        } catch (e: Exception) {
-                            // Log parse error but continue
+    private suspend fun runSession(token: String) {
+        client.webSocket(
+            urlString = wsUrl,
+            request = {
+                headers.append(HttpHeaders.Authorization, "Bearer $token")
+            }
+        ) {
+            sessionActive.set(true)
+            _state.value = ConnectionState.CONNECTED
+
+            // The server requires an in-band AUTHENTICATE before it registers
+            // this connection, even though the bearer header is set.
+            send(Frame.Text(json.encodeToString(WsEvent.Authenticate(AuthPayload(access_token = token))) ))
+
+            coroutineScope {
+                // Reader: parse incoming frames into the event flow.
+                val reader = launch {
+                    for (frame in incoming) {
+                        if (frame is Frame.Text) {
+                            try {
+                                val event = json.decodeFromString<WsEvent>(frame.readText())
+                                _events.emit(event)
+                            } catch (_: Exception) {
+                                // Unparseable frame: skip it, keep the session.
+                            }
                         }
                     }
-                    is Frame.Binary -> {
-                        // Handle binary if needed
-                    }
-                    is Frame.Close -> {
-                        break
-                    }
-                    is Frame.Pong -> {
-                        // Pong received
-                    }
-                    is Frame.Ping -> {
-                        // Ping received
+                }
+
+                // Writer: the single consumer of the outbound queue. Anything
+                // queued while offline is flushed here on reconnect.
+                val writer = launch {
+                    for (event in outboundQueue) {
+                        try {
+                            send(Frame.Text(json.encodeToString(event)))
+                        } catch (_: Exception) {
+                            break // socket dead; the connection loop reconnects
+                        }
                     }
                 }
+
+                reader.join()
+                writer.cancel()
             }
-        } finally {
-            isConnected.set(false)
-            session.close(CloseReason(CloseReason.Codes.NORMAL, "Disconnected"))
+            sessionActive.set(false)
         }
     }
 
-    suspend fun send(event: WsEvent) {
-        session?.send(Frame.Text(json.encodeToString(event)))
+    /** Queue an event for delivery. Frames sent while offline flush on reconnect. */
+    suspend fun send(event: WsEvent): Result<Unit> {
+        start()
+        return if (!outboundQueue.isClosedForSend && outboundQueue.trySend(event).isSuccess) {
+            Result.success(Unit)
+        } else {
+            Result.failure(IllegalStateException("WebSocket is stopped"))
+        }
     }
 
     suspend fun sendMessage(
@@ -202,7 +241,7 @@ class WebSocketClient(
         mediaId: Long?,
         replyToId: Long?,
         tempId: String
-    ) {
+    ): Result<Unit> {
         val payload = MessageSendPayload(
             conversation_id = conversationId,
             type = type,
@@ -211,95 +250,36 @@ class WebSocketClient(
             reply_to_id = replyToId,
             temp_id = tempId
         )
-        send(WsEvent.MessageSend(id = tempId, payload = payload))
+        return send(WsEvent.MessageSend(id = tempId, payload = payload))
     }
 
-    suspend fun sendTypingStart(conversationId: Long) {
+    suspend fun sendTypingStart(conversationId: Long): Result<Unit> =
         send(WsEvent.TypingStart(payload = TypingPayload(conversation_id = conversationId)))
-    }
 
-    suspend fun sendTypingStop(conversationId: Long) {
+    suspend fun sendTypingStop(conversationId: Long): Result<Unit> =
         send(WsEvent.TypingStop(payload = TypingPayload(conversation_id = conversationId)))
-    }
 
-    suspend fun sendReadReceipt(messageId: Long, conversationId: Long) {
-        // Server derives user from session, we just send message_id
-        // This would need a specific event type
-    }
+    suspend fun sendReadReceipt(messageId: Long, conversationId: Long): Result<Unit> =
+        send(WsEvent.MessageRead(
+            payload = MessageReadPayload(
+                message_id = messageId,
+                conversation_id = conversationId,
+                read_by = 0, // server derives the user from the session
+                read_at = System.currentTimeMillis() / 1000
+            )
+        ))
 
-    suspend fun disconnect() {
-        isConnected.set(false)
-        session?.close(CloseReason(CloseReason.Codes.NORMAL, "Client disconnect"))
-        session = null
-        reconnectJob?.cancel()
-    }
-
-    val connected: Boolean
-        get() = isConnected.get()
-}
-
-class WebSocketManager(
-    private val client: HttpClient,
-    private val wsUrl: String,
-    private val tokenProvider: () -> String?
-) {
-    private val clientInstance = WebSocketClient(client, wsUrl, tokenProvider)
-    private var reconnectJob: Job? = null
-    private var connectionState = ConnectionState.DISCONNECTED
-
-    enum class ConnectionState {
-        DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING
-    }
-
-    val events: ReceiveChannel<WsEvent> = clientInstance.events
-    val state: ConnectionState
-        get() = connectionState
-
-    suspend fun connect(): Result<Unit> {
-        connectionState = ConnectionState.CONNECTING
-        val result = clientInstance.connect()
-        if (result.isSuccess) {
-            connectionState = ConnectionState.CONNECTED
-            startPingPong()
-        } else {
-            connectionState = ConnectionState.DISCONNECTED
-            scheduleReconnect()
+    /** Stops the connection loop and discards queued frames. */
+    fun disconnect() {
+        started.set(false)
+        connectionJob?.cancel()
+        connectionJob = null
+        // Drain anything queued so a later restart doesn't replay stale sends.
+        while (true) {
+            val r = outboundQueue.tryReceive()
+            if (r.isFailure) break
         }
-        return result
-    }
-
-    private fun startPingPong() {
-        // Ping every 30 seconds
-        // In a real implementation, this would be a coroutine
-    }
-
-    private fun scheduleReconnect() {
-        reconnectJob?.cancel()
-        reconnectJob = CoroutineScope(Dispatchers.IO).launch {
-            connectionState = ConnectionState.RECONNECTING
-            var delay = 1000L
-            val maxDelay = 30000L
-
-            while (true) {
-                delay(delay)
-                val result = clientInstance.connect()
-                if (result.isSuccess) {
-                    connectionState = ConnectionState.CONNECTED
-                    startPingPong()
-                    break
-                }
-                delay = minOf(delay * 2, maxDelay)
-            }
-        }
-    }
-
-    suspend fun send(event: WsEvent) {
-        clientInstance.send(event)
-    }
-
-    suspend fun disconnect() {
-        reconnectJob?.cancel()
-        clientInstance.disconnect()
-        connectionState = ConnectionState.DISCONNECTED
+        sessionActive.set(false)
+        _state.value = ConnectionState.DISCONNECTED
     }
 }

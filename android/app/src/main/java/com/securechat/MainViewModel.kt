@@ -2,8 +2,9 @@ package com.securechat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.securechat.core.common.Result
 import com.securechat.core.security.TokenStorage
+import com.securechat.data.sync.WebSocketEventProcessor
+import com.securechat.data.remote.websocket.WebSocketManager
 import com.securechat.domain.model.User
 import com.securechat.domain.repository.AuthRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -15,7 +16,9 @@ import javax.inject.Inject
 @HiltViewModel
 class MainViewModel @Inject constructor(
     private val tokenStorage: TokenStorage,
-    private val authRepository: AuthRepository
+    private val authRepository: AuthRepository,
+    private val webSocketManager: WebSocketManager,
+    private val webSocketEventProcessor: WebSocketEventProcessor
 ) : ViewModel() {
 
     private val _authState = MutableStateFlow<AuthState>(AuthState.Unknown)
@@ -27,25 +30,42 @@ class MainViewModel @Inject constructor(
         object Unknown : AuthState
     }
 
+    init {
+        checkAuthState()
+
+        viewModelScope.launch {
+            authState.collect { state ->
+                when (state) {
+                    is AuthState.Authenticated -> {
+                        // Keep the realtime channel alive and apply incoming
+                        // events to the local cache for as long as we're signed in.
+                        webSocketManager.start()
+                        webSocketEventProcessor.start(viewModelScope)
+                    }
+                    is AuthState.Unauthenticated -> {
+                        webSocketEventProcessor.stop()
+                        webSocketManager.disconnect()
+                    }
+                    is AuthState.Unknown -> Unit
+                }
+            }
+        }
+    }
+
     fun observeAuthState(onChange: (AuthState) -> Unit) {
         viewModelScope.launch {
             authState.collect(onChange)
         }
     }
 
-    private fun setAuthState(newState: AuthState) {
-        _authState.value = newState
-    }
-
     fun onAuthSuccess() {
-        // Load current user from repository
         viewModelScope.launch {
-            val result = authRepository.getCurrentUser() // This would need to be added to AuthRepository
+            val result = authRepository.getCurrentUser()
             result.onSuccess { user ->
-                setAuthState(AuthState.Authenticated(user))
+                _authState.value = AuthState.Authenticated(user)
             }.onFailure {
-                // Try to get from token storage
-                checkAuthState()
+                // Tokens may have expired while the app was backgrounded.
+                tryRefreshToken()
             }
         }
     }
@@ -53,7 +73,8 @@ class MainViewModel @Inject constructor(
     fun onLogout() {
         viewModelScope.launch {
             authRepository.logout()
-            setAuthState(AuthState.Unauthenticated)
+            com.securechat.core.utils.UserSession.clear()
+            _authState.value = AuthState.Unauthenticated
         }
     }
 
@@ -61,20 +82,9 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             val tokenResult = tokenStorage.getAccessToken()
             if (tokenResult.isSuccess && !tokenStorage.isAccessTokenExpired()) {
-                // We have a valid token, but need to load user
-                setAuthState(AuthState.Authenticated(User(
-                    id = 0,
-                    phoneNumber = "",
-                    username = null,
-                    displayName = "User",
-                    profileImageId = null,
-                    lastSeen = null,
-                    isOnline = true,
-                    createdAt = System.currentTimeMillis(),
-                    updatedAt = System.currentTimeMillis()
-                )))
+                loadUserOrDefault()
             } else {
-                setAuthState(AuthState.Unauthenticated)
+                tryRefreshToken()
             }
         }
     }
@@ -83,7 +93,19 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             val result = authRepository.refreshToken()
             result.onSuccess {
-                setAuthState(AuthState.Authenticated(User(
+                loadUserOrDefault()
+            }.onFailure {
+                authRepository.logout()
+                _authState.value = AuthState.Unauthenticated
+            }
+        }
+    }
+
+    private suspend fun loadUserOrDefault() {
+        val result = authRepository.getCurrentUser()
+        _authState.value = AuthState.Authenticated(
+            result.getOrElse {
+                User(
                     id = 0,
                     phoneNumber = "",
                     username = null,
@@ -93,11 +115,10 @@ class MainViewModel @Inject constructor(
                     isOnline = true,
                     createdAt = System.currentTimeMillis(),
                     updatedAt = System.currentTimeMillis()
-                )))
-            }.onFailure {
-                authRepository.logout()
-                setAuthState(AuthState.Unauthenticated)
+                )
             }
-        }
+        )
+        val user = (_authState.value as AuthState.Authenticated).user
+        com.securechat.core.utils.UserSession.update(user.id, user.displayName)
     }
 }

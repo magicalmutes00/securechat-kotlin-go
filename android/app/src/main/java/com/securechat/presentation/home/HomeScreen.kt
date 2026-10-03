@@ -47,33 +47,17 @@ import com.securechat.presentation.theme.Theme
 fun HomeScreen(
     onLogout: () -> Unit,
     onNewChat: () -> Unit,
-    onSettings: () -> Unit
+    onSettings: () -> Unit,
+    onConversationClick: (conversationId: Long, otherUserName: String) -> Unit
 ) {
-    // Sample conversations - would come from ViewModel
-    val conversations = listOf(
-        Conversation(
-            id = 1,
-            type = ConversationType.DIRECT,
-            participants = listOf(
-                ConversationParticipant(1, 2, System.currentTimeMillis(), null, null)
-            ),
-            lastMessage = null,
-            unreadCount = 2,
-            createdAt = System.currentTimeMillis() - 86400000,
-            updatedAt = System.currentTimeMillis() - 3600000
-        ),
-        Conversation(
-            id = 2,
-            type = ConversationType.DIRECT,
-            participants = listOf(
-                ConversationParticipant(2, 3, System.currentTimeMillis(), null, null)
-            ),
-            lastMessage = null,
-            unreadCount = 0,
-            createdAt = System.currentTimeMillis() - 172800000,
-            updatedAt = System.currentTimeMillis() - 7200000
-        )
-    )
+    val viewModel = androidx.hilt.navigation.compose.hiltViewModel<HomeViewModel>()
+    val currentUserId = com.securechat.core.utils.UserSession.currentUserId
+
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        viewModel.loadConversations()
+    }
+
+    val conversations = viewModel.conversations.value
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -93,7 +77,7 @@ fun HomeScreen(
                     fontSize = 20.sp,
                     fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                 )
-                
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -106,7 +90,7 @@ fun HomeScreen(
                             contentDescription = "New Chat"
                         )
                     }
-                    
+
                     IconButton(onClick = onSettings) {
                         Icon(
                             imageVector = androidx.compose.material.icons.Icons.Default.Settings,
@@ -115,11 +99,24 @@ fun HomeScreen(
                     }
                 }
             }
-            
+
             Divider()
-            
+
+            viewModel.errorMessage.value?.let { error ->
+                Text(
+                    text = error,
+                    fontSize = 14.sp,
+                    color = androidx.compose.material3.MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+            }
+
             // Conversations List
-            if (conversations.isEmpty()) {
+            if (viewModel.isLoading.value) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    androidx.compose.material3.CircularProgressIndicator()
+                }
+            } else if (conversations.isEmpty()) {
                 EmptyState(
                     icon = androidx.compose.material.icons.Icons.Default.ChatBubbleOutline,
                     title = "No conversations yet",
@@ -135,7 +132,13 @@ fun HomeScreen(
                     items(conversations) { conversation ->
                         ConversationItem(
                             conversation = conversation,
-                            onClick = { /* Navigate to chat */ }
+                            currentUserId = currentUserId,
+                            onClick = {
+                                onConversationClick(
+                                    conversation.id,
+                                    conversation.getDisplayName(currentUserId)
+                                )
+                            }
                         )
                         Divider(modifier = Modifier.padding(start = 72.dp))
                     }
@@ -148,18 +151,19 @@ fun HomeScreen(
 @Composable
 fun ConversationItem(
     conversation: Conversation,
+    currentUserId: Long,
     onClick: () -> Unit
 ) {
-    val otherParticipant = conversation.getOtherParticipant(1) // Current user ID
+    val otherParticipant = conversation.getOtherParticipant(currentUserId)
     
     ListItem(
         modifier = Modifier.fillMaxWidth().clickable { onClick() },
         leadingContent = {
-            Avatar(
-                url = conversation.getAvatarUrl(1),
-                name = otherParticipant?.user?.displayName ?: "Unknown",
-                size = 56
-            )
+                Avatar(
+                    url = conversation.getAvatarUrl(currentUserId),
+                    name = otherParticipant?.user?.displayName ?: "Unknown",
+                    size = 56
+                )
         },
         headlineContent = {
             Text(

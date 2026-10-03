@@ -38,7 +38,9 @@ class NetworkModule {
                         Log.d("KtorClient", message)
                     }
                 }
-                level = LogLevel.ALL
+                // Full bodies (including Authorization headers) only in debug;
+                // release logs nothing rather than risking token leakage.
+                level = if (com.securechat.BuildConfig.DEBUG) LogLevel.INFO else LogLevel.NONE
             }
 
             install(HttpTimeout) {

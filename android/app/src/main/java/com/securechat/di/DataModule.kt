@@ -141,8 +141,9 @@ object DataModule {
         apiService: ApiService,
         database: SecureChatDatabase,
         messageDao: MessageDao,
-        mediaDao: MediaDao
-    ): MessageRepository = MessageRepositoryImpl(apiService, database, messageDao, mediaDao)
+        mediaDao: MediaDao,
+        webSocketManager: WebSocketManager
+    ): MessageRepository = MessageRepositoryImpl(apiService, database, messageDao, mediaDao, webSocketManager)
 
     @Provides
     @Singleton

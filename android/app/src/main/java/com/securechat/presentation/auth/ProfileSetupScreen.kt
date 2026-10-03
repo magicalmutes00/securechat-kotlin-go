@@ -28,7 +28,7 @@ fun ProfileSetupScreen(
     onComplete: () -> Unit,
     onSkip: () -> Unit
 ) {
-    val viewModel = androidx.lifecycle.viewmodel.compose.viewModel<ProfileSetupViewModel>()
+    val viewModel = androidx.hilt.navigation.compose.hiltViewModel<ProfileSetupViewModel>()
 
     Column(
         modifier = Modifier.fillMaxSize(),
