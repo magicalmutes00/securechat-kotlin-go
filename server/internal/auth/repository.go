@@ -218,20 +218,36 @@ func (r *Repository) FindSessionByID(ctx context.Context, id int64) (*Session, e
 	return &session, nil
 }
 
-func (r *Repository) FindActiveSessionByRefreshToken(ctx context.Context, refreshTokenHash string) (*Session, error) {
-	var session Session
-	err := r.db.QueryRowContext(ctx, `
-		SELECT id, user_id, device_id, refresh_token_hash, expires_at, revoked_at, created_at
-		FROM sessions 
-		WHERE refresh_token_hash = ? AND revoked_at IS NULL AND expires_at > NOW()
-	`, refreshTokenHash).Scan(
-		&session.ID, &session.UserID, &session.DeviceID, &session.RefreshTokenHash,
-		&session.ExpiresAt, &session.RevokedAt, &session.CreatedAt,
-	)
+// UpdateSessionRefreshHash rotates a session's refresh token hash in place.
+// The session row (and therefore the session_id claim inside the JWTs) stays
+// stable across rotations, so access tokens remain bound to the same session.
+func (r *Repository) UpdateSessionRefreshHash(ctx context.Context, sessionID int64, refreshToken string, expiresAt time.Time) error {
+	refreshTokenHash, err := crypto.HashPassword(refreshToken)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("failed to hash refresh token: %w", err)
 	}
-	return &session, nil
+
+	_, err = r.db.ExecContext(ctx, `
+		UPDATE sessions SET refresh_token_hash = ?, expires_at = ? WHERE id = ?
+	`, refreshTokenHash, expiresAt, sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to update session refresh hash: %w", err)
+	}
+	return nil
+}
+
+// IsSessionActive reports whether a session exists, belongs to the user, and
+// has not been revoked or expired. Used by the HTTP auth middleware so that
+// logout/device revocation takes effect immediately, not at token expiry.
+func (r *Repository) IsSessionActive(ctx context.Context, userID, sessionID int64) (bool, error) {
+	var isActive bool
+	err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM sessions
+			WHERE id = ? AND user_id = ? AND revoked_at IS NULL AND expires_at > NOW()
+		)
+	`, sessionID, userID).Scan(&isActive)
+	return isActive, err
 }
 
 func (r *Repository) RevokeSession(ctx context.Context, sessionID int64) error {
@@ -276,25 +292,17 @@ func (r *Repository) GetUserDevices(ctx context.Context, userID int64) ([]*Devic
 	return devices, nil
 }
 
-func (r *Repository) RevokeDevice(ctx context.Context, deviceID int64) error {
-	_, err := r.db.ExecContext(ctx, `
-		UPDATE devices SET last_seen = NOW() WHERE id = ?
-	`, deviceID)
-	return err
-}
-
-func (r *Repository) FindSessionByRefreshToken(ctx context.Context, refreshToken string) (*Session, error) {
-	refreshTokenHash, err := crypto.HashPassword(refreshToken)
-	if err != nil {
-		return nil, fmt.Errorf("failed to hash refresh token: %w", err)
-	}
-
+// FindSessionByRefreshToken returns the session row for a presented refresh
+// token so callers can verify the bcrypt hash against it. It matches by
+// session ID — bcrypt salts every hash, so the stored hash can never be
+// looked up by re-hashing the token.
+func (r *Repository) FindSessionByRefreshToken(ctx context.Context, sessionID int64) (*Session, error) {
 	var session Session
-	err = r.db.QueryRowContext(ctx, `
+	err := r.db.QueryRowContext(ctx, `
 		SELECT id, user_id, device_id, refresh_token_hash, expires_at, revoked_at, created_at
-		FROM sessions 
-		WHERE refresh_token_hash = ? AND revoked_at IS NULL AND expires_at > NOW()
-	`, refreshTokenHash).Scan(
+		FROM sessions
+		WHERE id = ?
+	`, sessionID).Scan(
 		&session.ID, &session.UserID, &session.DeviceID, &session.RefreshTokenHash,
 		&session.ExpiresAt, &session.RevokedAt, &session.CreatedAt,
 	)

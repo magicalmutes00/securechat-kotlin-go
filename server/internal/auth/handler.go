@@ -8,6 +8,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/securechat/server/config"
+	"github.com/securechat/server/internal/middleware"
 	"github.com/securechat/server/internal/otp"
 	apperrors "github.com/securechat/server/pkg/errors"
 	"github.com/securechat/server/pkg/logger"
@@ -21,17 +22,7 @@ type Handler struct {
 	cfg          *config.Config
 }
 
-func RegisterRoutes(api fiber.Router, db *sql.DB, tokenManager *TokenManager, cfg *config.Config) {
-	// Initialize OTP provider
-	var provider otp.Provider
-	switch cfg.OTP.Provider {
-	case "twilio":
-		provider = otp.NewTwilioProvider(cfg.OTP.TwilioAccountSID, cfg.OTP.TwilioAuthToken, cfg.OTP.TwilioFromNumber)
-	default:
-		provider = &otp.MockProvider{}
-	}
-
-	otpService := otp.NewService(db, provider, cfg)
+func RegisterRoutes(api fiber.Router, db *sql.DB, tokenManager *TokenManager, cfg *config.Config, otpService *otp.Service) {
 	repo := NewRepository(db)
 	service := NewService(repo, otpService, tokenManager, cfg)
 	handler := &Handler{
@@ -45,7 +36,9 @@ func RegisterRoutes(api fiber.Router, db *sql.DB, tokenManager *TokenManager, cf
 	auth.Post("/verify-otp", handler.VerifyOTP)
 	auth.Post("/google", handler.GoogleAuth)
 	auth.Post("/refresh", handler.RefreshToken)
-	auth.Post("/logout", handler.Logout)
+	// Logout must sit behind the auth middleware: it needs the session ID
+	// claim from the access token to know which session to revoke.
+	auth.Post("/logout", handler.Logout, middleware.JWTAuth(tokenManager, middleware.NewDBSessionChecker(db)))
 }
 
 type SendOTPRequest struct {

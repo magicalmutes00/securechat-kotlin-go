@@ -21,17 +21,7 @@ func RegisterRoutes(api fiber.Router, db *sql.DB, tokenManager *auth.TokenManage
 	service := NewService(repo)
 	handler := &Handler{service: service}
 
-	conversations := api.Group("/conversations", middleware.AuthMiddleware(middleware.TokenValidatorFunc(func(tokenString string) (middleware.TokenClaims, error) {
-		claims, err := tokenManager.ValidateAccessToken(tokenString)
-		if err != nil {
-			return middleware.TokenClaims{}, err
-		}
-		return middleware.TokenClaims{
-			UserID:    claims.UserID,
-			DeviceID:  claims.DeviceID,
-			SessionID: claims.SessionID,
-		}, nil
-	})))
+	conversations := api.Group("/conversations", middleware.JWTAuth(tokenManager, middleware.NewDBSessionChecker(db)))
 	conversations.Get("", handler.GetConversations)
 	conversations.Post("", handler.CreateConversation)
 	conversations.Get("/:id", handler.GetConversation)

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	apperrors "github.com/securechat/server/pkg/errors"
@@ -20,7 +21,8 @@ func NewRepository(db *sql.DB) *Repository {
 
 type User struct {
 	ID             int64
-	PhoneNumber    string
+	PhoneNumber    sql.NullString // NULL for Google-authenticated users
+	Email          sql.NullString
 	Username       sql.NullString
 	DisplayName    string
 	ProfileImageID sql.NullInt64
@@ -43,10 +45,10 @@ type UserSettings struct {
 func (r *Repository) GetByID(ctx context.Context, id int64) (*User, error) {
 	var user User
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, phone_number, username, display_name, profile_image_id, last_seen, is_online, created_at, updated_at
+		SELECT id, phone_number, email, username, display_name, profile_image_id, last_seen, is_online, created_at, updated_at
 		FROM users WHERE id = ?
 	`, id).Scan(
-		&user.ID, &user.PhoneNumber, &user.Username, &user.DisplayName,
+		&user.ID, &user.PhoneNumber, &user.Email, &user.Username, &user.DisplayName,
 		&user.ProfileImageID, &user.LastSeen, &user.IsOnline, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
@@ -92,13 +94,18 @@ func (r *Repository) UpdateAvatar(ctx context.Context, id int64, imageID int64) 
 	return r.GetByID(ctx, id)
 }
 
+// Search matches username/display_name/phone but never returns phone numbers
+// in the result — a user search must not become a phone-number directory.
 func (r *Repository) Search(ctx context.Context, query string, limit int) ([]*User, error) {
+	// Escape LIKE wildcards so user input cannot match everything.
+	escaped := escapeLike(query)
+	pattern := "%" + escaped + "%"
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, phone_number, username, display_name, profile_image_id, last_seen, is_online, created_at, updated_at
+		SELECT id, phone_number, email, username, display_name, profile_image_id, last_seen, is_online, created_at, updated_at
 		FROM users 
 		WHERE username LIKE ? OR display_name LIKE ? OR phone_number LIKE ?
 		LIMIT ?
-	`, "%"+query+"%", "%"+query+"%", "%"+query+"%", limit)
+	`, pattern, pattern, pattern, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search users: %w", err)
 	}
@@ -107,12 +114,23 @@ func (r *Repository) Search(ctx context.Context, query string, limit int) ([]*Us
 	var users []*User
 	for rows.Next() {
 		var user User
-		if err := rows.Scan(&user.ID, &user.PhoneNumber, &user.Username, &user.DisplayName, &user.ProfileImageID, &user.LastSeen, &user.IsOnline, &user.CreatedAt, &user.UpdatedAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.PhoneNumber, &user.Email, &user.Username, &user.DisplayName, &user.ProfileImageID, &user.LastSeen, &user.IsOnline, &user.CreatedAt, &user.UpdatedAt); err != nil {
 			return nil, err
 		}
+		// Never expose other users' phone numbers or emails through search.
+		user.PhoneNumber = sql.NullString{}
+		user.Email = sql.NullString{}
 		users = append(users, &user)
 	}
 	return users, nil
+}
+
+// escapeLike escapes the SQL LIKE wildcards (% and _) and the escape char.
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
 }
 
 func (r *Repository) GetSettings(ctx context.Context, userID int64) (*UserSettings, error) {

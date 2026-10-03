@@ -29,3 +29,13 @@ func NewTokenManager(cfg *config.Config) (*TokenManager, error) {
 
 	return &TokenManager{TokenManager: tm}, nil
 }
+
+// ValidateAccessClaims implements middleware.ClaimsValidator so route modules
+// can share one auth middleware without importing this package's claim types.
+func (tm *TokenManager) ValidateAccessClaims(tokenString string) (userID, deviceID, sessionID int64, err error) {
+	claims, err := tm.ValidateAccessToken(tokenString)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return claims.UserID, claims.DeviceID, claims.SessionID, nil
+}

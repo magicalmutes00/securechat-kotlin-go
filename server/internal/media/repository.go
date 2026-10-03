@@ -81,6 +81,21 @@ func (r *Repository) Delete(ctx context.Context, id int64) error {
 	return err
 }
 
+// LinkToMessage attaches an uploaded media row to a freshly created message.
+// Ownership is checked so a client cannot attach another user's media.
+func (r *Repository) LinkToMessage(ctx context.Context, mediaID, messageID, userID int64) error {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE media SET message_id = ? WHERE id = ? AND user_id = ?
+	`, messageID, mediaID, userID)
+	if err != nil {
+		return fmt.Errorf("failed to link media to message: %w", err)
+	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return apperrors.ErrMediaNotFound
+	}
+	return nil
+}
+
 func (r *Repository) GetByMessageID(ctx context.Context, messageID int64) (*MediaRecord, error) {
 	var media MediaRecord
 	err := r.db.QueryRowContext(ctx, `

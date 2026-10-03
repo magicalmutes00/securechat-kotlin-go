@@ -13,7 +13,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/securechat/server/pkg/logger"
-	"go.uber.org/zap"
 )
 
 type TokenManager struct {
@@ -46,8 +45,11 @@ func NewTokenManager(
 	var refreshPub *rsa.PublicKey
 	var err error
 
-	// Generate access key if not provided or invalid
+	// Generate access key if not provided; fail hard if provided but invalid.
+	// A silent ephemeral fallback would invalidate every token on restart and
+	// hide misconfiguration (e.g. a typo'd env var) in production.
 	if accessSecretB64 == "" {
+		logger.Log.Warn("JWT access secret not configured - generating EPHEMERAL key pair (tokens will not survive restart)")
 		accessPriv, accessPub, err = generateKeyPair()
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate access key: %w", err)
@@ -55,17 +57,13 @@ func NewTokenManager(
 	} else {
 		accessPriv, accessPub, err = parseKeys(accessSecretB64)
 		if err != nil {
-			// Fallback: generate new key if parsing fails
-			logger.Log.Warn("Failed to parse access keys, generating new key pair", zap.Error(err))
-			accessPriv, accessPub, err = generateKeyPair()
-			if err != nil {
-				return nil, fmt.Errorf("failed to generate access key: %w", err)
-			}
+			return nil, fmt.Errorf("invalid JWT access secret: %w", err)
 		}
 	}
 
-	// Generate refresh key if not provided or invalid
+	// Generate refresh key if not provided; fail hard if provided but invalid.
 	if refreshSecretB64 == "" {
+		logger.Log.Warn("JWT refresh secret not configured - generating EPHEMERAL key pair (tokens will not survive restart)")
 		refreshPriv, refreshPub, err = generateKeyPair()
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate refresh key: %w", err)
@@ -73,12 +71,7 @@ func NewTokenManager(
 	} else {
 		refreshPriv, refreshPub, err = parseKeys(refreshSecretB64)
 		if err != nil {
-			// Fallback: generate new key if parsing fails
-			logger.Log.Warn("Failed to parse refresh keys, generating new key pair", zap.Error(err))
-			refreshPriv, refreshPub, err = generateKeyPair()
-			if err != nil {
-				return nil, fmt.Errorf("failed to generate refresh key: %w", err)
-			}
+			return nil, fmt.Errorf("invalid JWT refresh secret: %w", err)
 		}
 	}
 
@@ -113,17 +106,19 @@ func parseKeys(secretB64 string) (*rsa.PrivateKey, *rsa.PublicKey, error) {
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to parse PKCS8: %w", err)
 		}
-		privKey = key.(*rsa.PrivateKey)
+		rsaKey, ok := key.(*rsa.PrivateKey)
+		if !ok {
+			return nil, nil, fmt.Errorf("private key is %T, want RSA", key)
+		}
+		privKey = rsaKey
 	} else if block.Type == "RSA PRIVATE KEY" {
-		privKey, err = x509.ParsePKCS1PrivateKey(block.Bytes)
+		parsed, err := x509.ParsePKCS1PrivateKey(block.Bytes)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to parse PKCS1: %w", err)
 		}
+		privKey = parsed
 	} else {
 		return nil, nil, errors.New("unsupported key type: " + block.Type)
-	}
-	if err != nil {
-		return nil, nil, err
 	}
 
 	// Extract public key
@@ -213,7 +208,9 @@ func (tm *TokenManager) ValidateRefreshToken(tokenString string) (*Claims, error
 // validateToken validates a JWT token
 func (tm *TokenManager) validateToken(tokenString string, publicKey *rsa.PublicKey, expectedType string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (any, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+		// Pin to RS256 exactly; accepting the whole RSA family would let a
+		// token signed with a different RSA variant slip through.
+		if token.Method != jwt.SigningMethodRS256 {
 			return nil, errors.New("unexpected signing method")
 		}
 		return publicKey, nil

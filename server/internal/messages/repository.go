@@ -167,3 +167,13 @@ func (r *Repository) UpdateReadStatus(ctx context.Context, messageID int64) erro
 	`, messageID)
 	return err
 }
+
+// BelongsToConversation verifies that a message is part of the given
+// conversation, so receipts and deletes cannot be applied cross-conversation.
+func (r *Repository) BelongsToConversation(ctx context.Context, messageID, conversationID int64) (bool, error) {
+	var belongs bool
+	err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM messages WHERE id = ? AND conversation_id = ?)
+	`, messageID, conversationID).Scan(&belongs)
+	return belongs, err
+}

@@ -10,6 +10,7 @@ import (
 	apperrors "github.com/securechat/server/pkg/errors"
 	"github.com/securechat/server/config"
 	"github.com/securechat/server/internal/otp"
+	"github.com/securechat/server/pkg/crypto"
 	"github.com/securechat/server/pkg/logger"
 	"go.uber.org/zap"
 )
@@ -100,23 +101,26 @@ func (s *Service) completeAuth(ctx context.Context, user *User, deviceName, devi
 		return nil, fmt.Errorf("failed to create device: %w", err)
 	}
 
-	// Create session
+	// Create session, then generate tokens bound to it. The refresh token
+	// contains the session ID, so the row must exist before the token pair is
+	// minted; the token's hash is written back to the same row afterwards.
 	refreshExpiresAt := time.Now().Add(time.Duration(s.cfg.JWT.RefreshTTL) * time.Second)
-	session, err := s.repo.CreateSession(ctx, user.ID, device.ID, "placeholder", refreshExpiresAt)
+	placeholderHash, err := crypto.GenerateSecureToken(32)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate session placeholder: %w", err)
+	}
+	session, err := s.repo.CreateSession(ctx, user.ID, device.ID, placeholderHash, refreshExpiresAt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
 
-	// Generate tokens
 	accessToken, refreshToken, err := s.tokenManager.GenerateTokenPair(user.ID, device.ID, session.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate tokens: %w", err)
 	}
 
-	// Update session with actual refresh token hash
-	_, err = s.repo.CreateSession(ctx, user.ID, device.ID, refreshToken, refreshExpiresAt)
-	if err != nil {
-		logger.Log.Error("Failed to update session with refresh token", zap.Error(err))
+	if err := s.repo.UpdateSessionRefreshHash(ctx, session.ID, refreshToken, refreshExpiresAt); err != nil {
+		return nil, fmt.Errorf("failed to store refresh token: %w", err)
 	}
 
 	// Update user online status
@@ -137,8 +141,10 @@ func (s *Service) RefreshToken(ctx context.Context, refreshToken string) (access
 		return "", "", apperrors.ErrTokenInvalid
 	}
 
-	// Find session and verify it's still active
-	session, err := s.repo.FindSessionByRefreshToken(ctx, refreshToken)
+	// Find the session named in the token and verify the presented token's
+	// hash against the stored one. bcrypt salts each hash, so equality of a
+	// re-computed hash is not a lookup strategy — compare explicitly.
+	session, err := s.repo.FindSessionByRefreshToken(ctx, claims.SessionID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", "", apperrors.ErrTokenRevoked
@@ -150,22 +156,31 @@ func (s *Service) RefreshToken(ctx context.Context, refreshToken string) (access
 		return "", "", apperrors.ErrTokenRevoked
 	}
 
-	// Revoke old session (rotation)
-	if err := s.repo.RevokeSession(ctx, session.ID); err != nil {
-		logger.Log.Error("Failed to revoke old session", zap.Error(err))
+	if !crypto.CheckPassword(session.RefreshTokenHash, refreshToken) {
+		// The token is cryptographically valid but no longer the session's
+		// current refresh token — this is a replayed rotated-out token, a
+		// classic sign of theft. Revoke everything for this user.
+		logger.Log.Warn("Refresh token reuse detected, revoking all sessions",
+			zap.Int64("user_id", session.UserID),
+			zap.Int64("session_id", session.ID),
+		)
+		_ = s.repo.RevokeAllUserSessions(ctx, session.UserID)
+		return "", "", apperrors.ErrTokenRevoked
 	}
 
-	// Create new session
+	if session.UserID != claims.UserID || session.DeviceID != claims.DeviceID {
+		return "", "", apperrors.ErrTokenInvalid
+	}
+
+	// Rotate in place: same session row and ID, new refresh token hash.
 	newRefreshExpiresAt := time.Now().Add(time.Duration(s.cfg.JWT.RefreshTTL) * time.Second)
-	newSession, err := s.repo.CreateSession(ctx, claims.UserID, claims.DeviceID, refreshToken, newRefreshExpiresAt)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to create new session: %w", err)
-	}
-
-	// Generate new tokens
-	newAccessToken, newRefreshToken, err := s.tokenManager.GenerateTokenPair(claims.UserID, claims.DeviceID, newSession.ID)
+	newAccessToken, newRefreshToken, err := s.tokenManager.GenerateTokenPair(claims.UserID, claims.DeviceID, session.ID)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to generate new tokens: %w", err)
+	}
+
+	if err := s.repo.UpdateSessionRefreshHash(ctx, session.ID, newRefreshToken, newRefreshExpiresAt); err != nil {
+		return "", "", fmt.Errorf("failed to store rotated refresh token: %w", err)
 	}
 
 	return newAccessToken, newRefreshToken, nil

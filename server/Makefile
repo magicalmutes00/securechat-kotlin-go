@@ -35,27 +35,27 @@ clean:
 	rm -rf bin/
 	rm -f coverage.out coverage.html
 
-# Development: run with air for hot reload
+# Development: run with air for hot reload (create .air.toml first or use defaults)
 dev:
-	air -c .air.toml
+	air
 
 # Install development tools
 install-tools:
 	go install github.com/pressly/goose/v3/cmd/goose@latest
 	go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
-	go install github.com/cosmtrek/air@latest
+	go install github.com/air-verse/air@latest
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
 # Generate RSA keys for JWT
 gen-keys:
 	@go run ./cmd/genkeys
 
-# Docker commands (for Cloudinary/Ollama only)
+# Docker commands (docker-compose.yml lives at the repo root)
 docker-up:
-	docker-compose up -d
+	docker compose -f ../docker-compose.yml up -d
 
 docker-down:
-	docker-compose down
+	docker compose -f ../docker-compose.yml down
 
 docker-logs:
-	docker-compose logs -f
+	docker compose -f ../docker-compose.yml logs -f

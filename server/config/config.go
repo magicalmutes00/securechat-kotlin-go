@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/spf13/viper"
@@ -93,7 +94,8 @@ func Load() (*Config, error) {
 	viper.SetDefault("securechat_mysql_port", "3306")
 	viper.SetDefault("securechat_mysql_database", "securechat")
 	viper.SetDefault("securechat_mysql_user", "securechat")
-	viper.SetDefault("securechat_mysql_password", "SecureChat2024!StrongPass")
+	// No default password: production must supply one (validated below).
+	viper.SetDefault("securechat_mysql_password", "")
 	viper.SetDefault("securechat_mysql_max_open_conns", 25)
 	viper.SetDefault("securechat_mysql_max_idle_conns", 5)
 	viper.SetDefault("securechat_mysql_conn_max_lifetime", 300)
@@ -111,9 +113,9 @@ func Load() (*Config, error) {
 	viper.SetDefault("securechat_cloudinary_max_video_mb", 500)
 	viper.SetDefault("securechat_cloudinary_max_audio_mb", 50)
 	viper.SetDefault("securechat_cloudinary_max_document_mb", 100)
-	viper.SetDefault("securechat_olla_url", "http://localhost:11434")
-	viper.SetDefault("securechat_olla_default_model", "llama3.1:8b")
-	viper.SetDefault("securechat_log_level", "debug")
+	viper.SetDefault("securechat_ollama_url", "http://localhost:11434")
+	viper.SetDefault("securechat_ollama_default_model", "llama3.1:8b")
+	viper.SetDefault("securechat_log_level", "info")
 	viper.SetDefault("securechat_log_format", "json")
 
 	if err := viper.ReadInConfig(); err != nil {
@@ -176,15 +178,39 @@ func Load() (*Config, error) {
 	cfg.Cloudinary.MaxAudioMB = viper.GetInt("securechat_cloudinary_max_audio_mb")
 	cfg.Cloudinary.MaxDocumentMB = viper.GetInt("securechat_cloudinary_max_document_mb")
 
-	cfg.Ollama.URL = viper.GetString("securechat_olla_url")
-	cfg.Ollama.APIKey = viper.GetString("securechat_olla_api_key")
-	cfg.Ollama.DefaultModel = viper.GetString("securechat_olla_default_model")
-	cfg.Ollama.Timeout = viper.GetInt("securechat_olla_timeout")
+	cfg.Ollama.URL = viper.GetString("securechat_ollama_url")
+	cfg.Ollama.APIKey = viper.GetString("securechat_ollama_api_key")
+	cfg.Ollama.DefaultModel = viper.GetString("securechat_ollama_default_model")
+	cfg.Ollama.Timeout = viper.GetInt("securechat_ollama_timeout")
 
 	cfg.Logger.Level = viper.GetString("securechat_log_level")
 	cfg.Logger.Format = viper.GetString("securechat_log_format")
 
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+
 	return &cfg, nil
+}
+
+// validate fails fast on configurations that would silently misbehave in
+// production (ephemeral JWT keys, missing DB password, mock OTP).
+func (c *Config) validate() error {
+	if c.Server.Env == "production" {
+		if c.JWT.AccessSecret == "" {
+			return fmt.Errorf("SECURECHAT_JWT_ACCESS_SECRET is required in production")
+		}
+		if c.JWT.RefreshSecret == "" {
+			return fmt.Errorf("SECURECHAT_JWT_REFRESH_SECRET is required in production")
+		}
+		if c.MySQL.Password == "" {
+			return fmt.Errorf("SECURECHAT_MYSQL_PASSWORD is required in production")
+		}
+		if c.OTP.Provider == "mock" {
+			return fmt.Errorf("SECURECHAT_OTP_PROVIDER=mock is not allowed in production")
+		}
+	}
+	return nil
 }
 
 func (c *Config) GetDSN() string {

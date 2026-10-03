@@ -22,17 +22,7 @@ func RegisterRoutes(api fiber.Router, db *sql.DB, tokenManager *auth.TokenManage
 	service := NewService(repo)
 	handler := &Handler{service: service}
 
-	users := api.Group("/users", middleware.AuthMiddleware(middleware.TokenValidatorFunc(func(tokenString string) (middleware.TokenClaims, error) {
-		claims, err := tokenManager.ValidateAccessToken(tokenString)
-		if err != nil {
-			return middleware.TokenClaims{}, err
-		}
-		return middleware.TokenClaims{
-			UserID:    claims.UserID,
-			DeviceID:  claims.DeviceID,
-			SessionID: claims.SessionID,
-		}, nil
-	})))
+	users := api.Group("/users", middleware.JWTAuth(tokenManager, middleware.NewDBSessionChecker(db)))
 	users.Get("/me", handler.GetProfile)
 	users.Patch("/me", handler.UpdateProfile)
 	users.Get("/search", handler.SearchUsers)
@@ -45,7 +35,8 @@ type UpdateProfileRequest struct {
 
 type UserResponse struct {
 	ID             int64   `json:"id"`
-	PhoneNumber    string  `json:"phone_number"`
+	PhoneNumber    *string `json:"phone_number,omitempty"`
+	Email          *string `json:"email,omitempty"`
 	Username       *string `json:"username,omitempty"`
 	DisplayName    string  `json:"display_name"`
 	ProfileImageID *int64  `json:"profile_image_id,omitempty"`
@@ -131,7 +122,8 @@ func toUserResponse(user *User) UserResponse {
 	}
 	return UserResponse{
 		ID:             user.ID,
-		PhoneNumber:    user.PhoneNumber,
+		PhoneNumber:    nullStringPtr(user.PhoneNumber),
+		Email:          nullStringPtr(user.Email),
 		Username:       nullStringPtr(user.Username),
 		DisplayName:    user.DisplayName,
 		ProfileImageID: nullInt64Ptr(user.ProfileImageID),

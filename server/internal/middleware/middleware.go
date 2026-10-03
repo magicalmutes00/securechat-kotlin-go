@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"context"
+	"database/sql"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -9,25 +11,43 @@ import (
 	"go.uber.org/zap"
 )
 
-// TokenValidator is an interface for validating access tokens
-type TokenValidator interface {
-	ValidateAccessToken(tokenString string) (TokenClaims, error)
+// ClaimsValidator is implemented by token managers that can verify an access
+// token and return its principal claims. Kept as an interface so middleware
+// does not import the auth package (auth imports middleware).
+type ClaimsValidator interface {
+	ValidateAccessClaims(tokenString string) (userID, deviceID, sessionID int64, err error)
 }
 
-// TokenValidatorFunc is a function type that implements TokenValidator
-type TokenValidatorFunc func(tokenString string) (TokenClaims, error)
-
-func (f TokenValidatorFunc) ValidateAccessToken(tokenString string) (TokenClaims, error) {
-	return f(tokenString)
+// SessionChecker reports whether a session is still active. A nil checker
+// skips the session lookup (JWT signature is still verified).
+type SessionChecker interface {
+	IsSessionActive(ctx context.Context, userID, sessionID int64) (bool, error)
 }
 
-type TokenClaims struct {
-	UserID    int64
-	DeviceID  int64
-	SessionID int64
+// DBSessionChecker validates sessions against the database so that logout and
+// device revocation take effect immediately instead of at access-token expiry.
+type DBSessionChecker struct {
+	db *sql.DB
 }
 
-func AuthMiddleware(tokenValidator TokenValidator) fiber.Handler {
+func NewDBSessionChecker(db *sql.DB) *DBSessionChecker {
+	return &DBSessionChecker{db: db}
+}
+
+func (c *DBSessionChecker) IsSessionActive(ctx context.Context, userID, sessionID int64) (bool, error) {
+	var isActive bool
+	err := c.db.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM sessions
+			WHERE id = ? AND user_id = ? AND revoked_at IS NULL AND expires_at > NOW()
+		)
+	`, sessionID, userID).Scan(&isActive)
+	return isActive, err
+}
+
+// JWTAuth returns middleware that verifies the Bearer access token and, when
+// a checker is supplied, that the token's session has not been revoked.
+func JWTAuth(validator ClaimsValidator, checker SessionChecker) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		authHeader := c.Get("Authorization")
 		if authHeader == "" {
@@ -41,15 +61,26 @@ func AuthMiddleware(tokenValidator TokenValidator) fiber.Handler {
 
 		tokenString := authHeader[len(prefix):]
 
-		claims, err := tokenValidator.ValidateAccessToken(tokenString)
+		userID, deviceID, sessionID, err := validator.ValidateAccessClaims(tokenString)
 		if err != nil {
 			logger.Log.Debug("Invalid access token", zap.Error(err))
 			return c.Status(401).JSON(errors.NewErrorResponse(errors.ErrTokenInvalid))
 		}
 
-		c.Locals("user_id", claims.UserID)
-		c.Locals("device_id", claims.DeviceID)
-		c.Locals("session_id", claims.SessionID)
+		if checker != nil {
+			active, err := checker.IsSessionActive(c.Context(), userID, sessionID)
+			if err != nil {
+				logger.Log.Error("Session check failed", zap.Error(err))
+				return c.Status(500).JSON(errors.NewErrorResponse(errors.ErrInternalServer))
+			}
+			if !active {
+				return c.Status(401).JSON(errors.NewErrorResponse(errors.ErrTokenRevoked))
+			}
+		}
+
+		c.Locals("user_id", userID)
+		c.Locals("device_id", deviceID)
+		c.Locals("session_id", sessionID)
 
 		return c.Next()
 	}
