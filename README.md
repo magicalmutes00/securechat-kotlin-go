@@ -29,13 +29,17 @@ A production-quality private messaging application with end-to-end encryption, o
 
 ## Features
 
-- **Secure Authentication**: Phone number OTP with JWT access/refresh tokens
+- **Authentication**: Phone number OTP with JWT access/refresh tokens, plus Google Sign-In
 - **Real-time Messaging**: WebSocket-based with delivery/read receipts
 - **Offline-First**: Room database with automatic sync
 - **Media Handling**: Direct Cloudinary uploads with signed URLs
-- **End-to-End Security**: Android Keystore, no secrets in app
+- **Secure Storage**: Android Keystore / EncryptedSharedPreferences for tokens
 - **Modern UI**: Jetpack Compose, Material 3, Dark/Light theme
-- **Optional AI**: Ollama integration for smart features
+- **Optional AI**: Ollama integration for smart features (planned)
+
+> **Note:** End-to-end message encryption is not implemented yet — traffic is
+> protected in transit with TLS/WSS. See the development phases below for
+> the current implementation status.
 
 ## Quick Start
 
@@ -52,18 +56,18 @@ git clone <repo>
 cd securechat/server
 cp .env.example .env
 # Edit .env with your credentials
+# Generate JWT keys and paste them into .env (SECURECHAT_JWT_*_SECRET)
+go run ./cmd/genkeys
 
 # 2. Install tools
 go install github.com/pressly/goose/v3/cmd/goose@latest
-go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
 
-# 3. Setup database
+# 3. Setup database (or use docker compose up mysql from the repo root)
 mysql -u root -p -e "CREATE DATABASE securechat CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 goose -dir migrations mysql "user:pass@tcp(localhost:3306)/securechat" up
 
-# 4. Generate code & run
-sqlc generate
-go run cmd/server/main.go
+# 4. Run
+go run ./cmd/server
 ```
 
 See [Windows Setup](docs/deployment/windows-setup.md) or [Linux Setup](docs/deployment/linux-setup.md) for detailed instructions.
@@ -117,11 +121,10 @@ securechat/
 │   └── go.mod
 │
 ├── docs/                    # Documentation
-│   ├── architecture.md
-│   ├── api-spec.md
-│   ├── database-schema.md
-│   ├── websocket-protocol.md
 │   └── deployment/
+│       ├── android-config.md
+│       ├── linux-setup.md
+│       └── windows-setup.md
 │
 ├── .github/workflows/       # CI/CD
 └── README.md
@@ -132,20 +135,20 @@ securechat/
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 1 | Architecture & Project Initialization | ✅ Complete |
-| 2 | Android Foundation (Compose, Hilt, Navigation) | 📋 Planned |
-| 3 | Go Backend Foundation (Fiber, Config, Logging) | 📋 Planned |
-| 4 | MySQL Schema & Repositories | 📋 Planned |
-| 5 | Authentication (OTP, JWT, Keystore) | 📋 Planned |
-| 6 | WebSocket Infrastructure | 📋 Planned |
-| 7 | Chat Core (Conversations, Messages) | 📋 Planned |
-| 8 | Room & Offline Sync | 📋 Planned |
-| 9 | Cloudinary Media | 📋 Planned |
+| 2 | Android Foundation (Compose, Hilt, Navigation) | ✅ Complete |
+| 3 | Go Backend Foundation (Fiber, Config, Logging) | ✅ Complete |
+| 4 | MySQL Schema & Repositories | ✅ Complete |
+| 5 | Authentication (OTP, JWT, Keystore) | ✅ Complete |
+| 6 | WebSocket Infrastructure | 🔶 Wired, needs integration testing |
+| 7 | Chat Core (Conversations, Messages) | 🔶 Core flows wired, UI polish pending |
+| 8 | Room & Offline Sync | 🔶 Partial (pending-ops queue unused) |
+| 9 | Cloudinary Media | 🔶 Backend done, Android UI wiring pending |
 | 10 | Chat Media UI | 📋 Planned |
 | 11 | Notifications | 📋 Planned |
 | 12 | Ollama AI | 📋 Planned |
-| 13 | Security Hardening | 📋 Planned |
+| 13 | Security Hardening | 🔶 Baseline done (rate limiting, session checks) |
 | 14 | Testing | 📋 Planned |
-| 15 | Deployment | 📋 Planned |
+| 15 | Deployment | 🔶 Render config present |
 
 ## Technology Stack
 
@@ -175,7 +178,7 @@ securechat/
 - **Signed direct uploads** - Android → Cloudinary with backend-generated signatures
 - **JWT in Keystore** - Access/refresh tokens encrypted at rest
 - **Short-lived tokens** - 15min access, 30day refresh with rotation
-- **OTP security** - bcrypt hash, 5-min expiry, rate limiting
+- **OTP security** - bcrypt hash, 5-min expiry, per-number cooldown
 - **HTTPS/WSS only** - Cleartext only for LAN development
 - **Database isolation** - MySQL not exposed publicly
 
@@ -234,6 +237,4 @@ Proprietary - All rights reserved.
 
 ## Contributing
 
-This is a private project. See [AGENTS.md](AGENTS.md) for development guidelines."# securechat-kotlin-go" 
-"# securechat-kotlin-go" 
-"# securechat-kotlin-go" 
+This is a private project. See [AGENTS.md](AGENTS.md) for development guidelines.
