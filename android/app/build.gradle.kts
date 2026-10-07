@@ -15,7 +15,9 @@ android {
     compileSdk = libs.versions.compileSdk.get().toInt()
 
     defaultConfig {
-        applicationId = "com.securechat"
+        // Must match the Firebase app registration in google-services.json
+        // (project chatgo-364a2). The code namespace stays com.securechat.
+        applicationId = "com.trisentricai.securechat"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
         versionCode = 1
@@ -66,7 +68,8 @@ android {
             isDebuggable = true
             isMinifyEnabled = false
             isShrinkResources = false
-            applicationIdSuffix = ".debug"
+            // No applicationIdSuffix: google-services.json registers only
+            // com.trisentricai.securechat, and debug installs use the same id.
             versionNameSuffix = "-debug"
             matchingFallbacks += "release"
         }

@@ -5,8 +5,10 @@
     <string name="server_base_url" translatable="false">https://securechat-kotlin-go-waw9.onrender.com/api/v1</string>
     <string name="server_ws_url" translatable="false">wss://securechat-kotlin-go-waw9.onrender.com/ws</string>
 
-    <!-- Google Sign-In: OAuth web client ID (audience for backend ID token verification) -->
-    <string name="google_server_client_id" translatable="false">1017026100204-jenac0l9o4juhdqtohv28j8dljfu7fhm.apps.googleusercontent.com</string>
+    <!-- Google Sign-In: OAuth web client ID (audience for backend ID token
+         verification). Must belong to the same Google Cloud project as the
+         Android OAuth client registered for this app's SHA-1. -->
+    <string name="google_server_client_id" translatable="false">698582690674-mhuokej95kb2c0e7u3aop2b6iporaci3.apps.googleusercontent.com</string>
     
     <!-- Media Limits (in bytes) -->
     <integer name="max_image_size_mb">20</integer>

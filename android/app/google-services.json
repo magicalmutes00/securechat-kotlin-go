@@ -1,41 +1,33 @@
 {
   "project_info": {
-    "project_number": "906804088645",
-    "project_id": "chatgo-c8449",
-    "storage_bucket": "chatgo-c8449.firebasestorage.app"
+    "project_number": "698582690674",
+    "project_id": "chatgo-364a2",
+    "storage_bucket": "chatgo-364a2.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:906804088645:android:e10b379107a7177481b82c",
+        "mobilesdk_app_id": "1:698582690674:android:60e221dae67ea318928beb",
         "android_client_info": {
-          "package_name": "com.securechat.debug"
+          "package_name": "com.trisentricai.securechat"
         }
       },
       "oauth_client": [
         {
-          "client_id": "906804088645-mi7ci12i915tuhcoui3ko006jfm8st61.apps.googleusercontent.com",
-          "client_type": 1,
-          "android_info": {
-            "package_name": "com.securechat.debug",
-            "certificate_hash": "c13439a0fd1b3254879fb4da38496c24a17df2cf"
-          }
-        },
-        {
-          "client_id": "906804088645-d56qcjqm62prm6mccvch22nena3hflg6.apps.googleusercontent.com",
+          "client_id": "698582690674-mhuokej95kb2c0e7u3aop2b6iporaci3.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
       "api_key": [
         {
-          "current_key": "AIzaSyDv2XG9EjrkDC4ufJlAJFlWosGVHbNz7IM"
+          "current_key": "AIzaSyAI8uKTujAogeITFN9DcbEtjEqadF86dLo"
         }
       ],
       "services": {
         "appinvite_service": {
           "other_platform_oauth_client": [
             {
-              "client_id": "906804088645-d56qcjqm62prm6mccvch22nena3hflg6.apps.googleusercontent.com",
+              "client_id": "698582690674-mhuokej95kb2c0e7u3aop2b6iporaci3.apps.googleusercontent.com",
               "client_type": 3
             }
           ]
