@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/pressly/goose/v3"
@@ -39,9 +41,16 @@ func New(cfg *config.Config) (*sql.DB, error) {
 	}
 
 	DB = db
+	// Log a sanitized target. With URL-based config (Neon) the host/database
+	// only exist inside the URL, and credentials must never reach the logs.
+	logHost, logName := cfg.Database.Host, cfg.Database.Name
+	if u, err := url.Parse(dsn); err == nil && u.Host != "" {
+		logHost = u.Host
+		logName = strings.TrimPrefix(u.Path, "/")
+	}
 	logger.Log.Info("Database connected",
-		zap.String("host", cfg.Database.Host),
-		zap.String("database", cfg.Database.Name),
+		zap.String("host", logHost),
+		zap.String("database", logName),
 	)
 
 	return db, nil
