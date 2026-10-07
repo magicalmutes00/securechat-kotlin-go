@@ -117,7 +117,7 @@ func (h *Handler) SearchUsers(c *fiber.Ctx) error {
 func toUserResponse(user *User) UserResponse {
 	var lastSeen *int64
 	if user.LastSeen.Valid {
-		ts := user.LastSeen.Time.Unix()
+		ts := user.LastSeen.Time.UnixMilli()
 		lastSeen = &ts
 	}
 	return UserResponse{
@@ -129,8 +129,8 @@ func toUserResponse(user *User) UserResponse {
 		ProfileImageID: nullInt64Ptr(user.ProfileImageID),
 		LastSeen:       lastSeen,
 		IsOnline:       user.IsOnline,
-		CreatedAt:      user.CreatedAt.Unix(),
-		UpdatedAt:      user.UpdatedAt.Unix(),
+		CreatedAt:      user.CreatedAt.UnixMilli(),
+		UpdatedAt:      user.UpdatedAt.UnixMilli(),
 	}
 }
 

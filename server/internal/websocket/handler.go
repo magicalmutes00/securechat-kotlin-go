@@ -363,7 +363,7 @@ func (c *Client) handleMessageSend(tempID string, payload json.RawMessage) {
 			TempID:    tempID,
 			MessageID: createdMsg.ID,
 			Status:    "sent",
-			CreatedAt: createdMsg.CreatedAt.Unix(),
+			CreatedAt: createdMsg.CreatedAt.UnixMilli(),
 		}),
 	}
 	c.sendMessage(ack)
@@ -433,7 +433,7 @@ func (c *Client) handleMessageRead(payload json.RawMessage) {
 			"message_id":      read.MessageID,
 			"conversation_id": read.ConversationID,
 			"read_by":         c.userID,
-			"read_at":         time.Now().Unix(),
+			"read_at":         time.Now().UnixMilli(),
 		}),
 	})
 }
@@ -467,7 +467,7 @@ func (c *Client) handleMessageDelivered(payload json.RawMessage) {
 			"message_id":      delivered.MessageID,
 			"conversation_id": delivered.ConversationID,
 			"delivered_to":    c.userID,
-			"delivered_at":    time.Now().Unix(),
+			"delivered_at":    time.Now().UnixMilli(),
 		}),
 	})
 }
@@ -594,7 +594,7 @@ func (h *Hub) updateUserOnlineStatus(userID int64, isOnline bool) {
 		Payload: mustMarshal(map[string]interface{}{
 			"user_id":   userID,
 			"is_online": isOnline,
-			"last_seen": time.Now().Unix(),
+			"last_seen": time.Now().UnixMilli(),
 		}),
 	})
 
@@ -639,8 +639,8 @@ func toMessageResponse(msg *messages.Message) map[string]interface{} {
 		"media_id":        nullIfZero(msg.MediaID.Int64, msg.MediaID.Valid),
 		"reply_to_id":     nullIfZero(msg.ReplyToID.Int64, msg.ReplyToID.Valid),
 		"status":          msg.Status,
-		"created_at":      msg.CreatedAt.Unix(),
-		"updated_at":      msg.UpdatedAt.Unix(),
+		"created_at":      msg.CreatedAt.UnixMilli(),
+		"updated_at":      msg.UpdatedAt.UnixMilli(),
 	}
 }
 

@@ -177,7 +177,7 @@ func toConversationResponse(conv *ConversationWithParticipants) ConversationResp
 			Text:      nullStringPtr(conv.LastMessage.Text),
 			MediaID:   nullInt64Ptr(conv.LastMessage.MediaID),
 			Status:    conv.LastMessage.Status,
-			CreatedAt: conv.LastMessage.CreatedAt.Unix(),
+			CreatedAt: conv.LastMessage.CreatedAt.UnixMilli(),
 		}
 	}
 
@@ -187,8 +187,8 @@ func toConversationResponse(conv *ConversationWithParticipants) ConversationResp
 		Participants:   participants,
 		LastMessage:    lastMsg,
 		UnreadCount:    conv.UnreadCount,
-		CreatedAt:      conv.CreatedAt.Unix(),
-		UpdatedAt:      conv.UpdatedAt.Unix(),
+		CreatedAt:      conv.CreatedAt.UnixMilli(),
+		UpdatedAt:      conv.UpdatedAt.UnixMilli(),
 	}
 }
 

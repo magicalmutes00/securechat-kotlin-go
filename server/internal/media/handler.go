@@ -208,6 +208,6 @@ func toMediaResponse(media *MediaRecord) MediaResponse {
 		Duration:           duration,
 		SHA256:             media.SHA256,
 		ThumbnailURL:       thumbnailURL,
-		CreatedAt:          media.CreatedAt.Unix(),
+		CreatedAt:          media.CreatedAt.UnixMilli(),
 	}
 }

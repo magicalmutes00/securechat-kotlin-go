@@ -122,7 +122,7 @@ func (h *Handler) GetDevices(c *fiber.Ctx) error {
 	for i, d := range devices {
 		var lastSeen *int64
 		if d.LastSeen.Valid {
-			ts := d.LastSeen.Time.Unix()
+			ts := d.LastSeen.Time.UnixMilli()
 			lastSeen = &ts
 		}
 		response[i] = DeviceResponse{
@@ -130,7 +130,7 @@ func (h *Handler) GetDevices(c *fiber.Ctx) error {
 			DeviceName:       d.DeviceName,
 			DeviceIdentifier: d.DeviceIdentifier,
 			Platform:         d.Platform,
-			CreatedAt:        d.CreatedAt.Unix(),
+			CreatedAt:        d.CreatedAt.UnixMilli(),
 			LastSeen:         lastSeen,
 		}
 	}

@@ -135,13 +135,13 @@ func toMessageResponse(msg *Message) MessageResponse {
 
 	var deliveredAt *int64
 	if msg.DeliveredAt.Valid {
-		ts := msg.DeliveredAt.Time.Unix()
+		ts := msg.DeliveredAt.Time.UnixMilli()
 		deliveredAt = &ts
 	}
 
 	var readAt *int64
 	if msg.ReadAt.Valid {
-		ts := msg.ReadAt.Time.Unix()
+		ts := msg.ReadAt.Time.UnixMilli()
 		readAt = &ts
 	}
 
@@ -154,8 +154,8 @@ func toMessageResponse(msg *Message) MessageResponse {
 		MediaID:       mediaID,
 		ReplyToID:     replyToID,
 		Status:        msg.Status,
-		CreatedAt:     msg.CreatedAt.Unix(),
-		UpdatedAt:     msg.UpdatedAt.Unix(),
+		CreatedAt:     msg.CreatedAt.UnixMilli(),
+		UpdatedAt:     msg.UpdatedAt.UnixMilli(),
 		DeliveredAt:   deliveredAt,
 		ReadAt:        readAt,
 	}
