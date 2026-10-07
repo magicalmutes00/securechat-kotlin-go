@@ -1,5 +1,5 @@
 # SecureChat Quick Start - Windows
-# Run as Administrator
+# Sets up the Go backend against a Neon PostgreSQL database.
 
 Write-Host "=== SecureChat Quick Start ===" -ForegroundColor Cyan
 
@@ -14,89 +14,52 @@ if ($LASTEXITCODE -ne 0) {
     $env:PATH += ";C:\Program Files\Go\bin"
 }
 
-# Check MySQL
-$mysqlPath = Get-Command mysql -ErrorAction SilentlyContinue
-if (-not $mysqlPath) {
-    Write-Host "MySQL not found. Installing..." -ForegroundColor Yellow
-    winget install Oracle.MySQL --accept-source-agreements --accept-package-agreements
+# Check goose (migrations tool)
+$goosePath = Get-Command goose -ErrorAction SilentlyContinue
+if (-not $goosePath) {
+    Write-Host "Installing goose..." -ForegroundColor Yellow
+    go install github.com/pressly/goose/v3/cmd/goose@latest
+    $env:PATH += ";$env:USERPROFILE\go\bin"
 }
 
-# 1. Start MySQL
-Write-Host "Starting MySQL service..." -ForegroundColor Yellow
-Start-Service MySQL80 -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 5
-
-# 2. Setup database
-Write-Host "Setting up database..." -ForegroundColor Yellow
-$rootPassword = Read-Host "Enter MySQL root password (set during installation)"
-$secureChatPassword = "SecureChat2024!StrongPass"
-
-mysql -u root -p$rootPassword -e "
-CREATE DATABASE IF NOT EXISTS securechat CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER IF NOT EXISTS 'securechat'@'%' IDENTIFIED BY '$secureChatPassword';
-GRANT ALL PRIVILEGES ON securechat.* TO 'securechat'@'%';
-FLUSH PRIVILEGES;"
-
-# 3. Generate RSA keys
-Write-Host "Generating RSA keys..." -ForegroundColor Yellow
 cd server
-$keys = go run ./cmd/genkeys
-# Parse output to get keys
+
+# 1. Ensure .env exists
+if (-not (Test-Path .env)) {
+    Write-Host "Creating .env from .env.example..." -ForegroundColor Yellow
+    Copy-Item .env.example .env
+}
+
+# 2. Get the Neon connection string
+$envLine = Select-String -Path .env -Pattern '^SECURECHAT_DATABASE_URL=(.+)$' | Select-Object -First 1
+$dbUrl = if ($envLine) { $envLine.Matches.Groups[1].Value } else { "" }
+if (-not $dbUrl -or $dbUrl -match 'ep-xxxx') {
+    $dbUrl = Read-Host "Enter Neon connection URL (postgresql://user:password@host/db?sslmode=require)"
+    if ($envLine) {
+        (Get-Content .env) -replace '^SECURECHAT_DATABASE_URL=.*$', "SECURECHAT_DATABASE_URL=$dbUrl" | Set-Content .env
+    } else {
+        Add-Content .env "SECURECHAT_DATABASE_URL=$dbUrl"
+    }
+}
+
+# 3. Generate RSA keys and inject them into .env
+Write-Host "Generating RSA keys..." -ForegroundColor Yellow
 $output = go run ./cmd/genkeys 2>&1
-$accessKey = ($output -match 'JWT_ACCESS_SECRET=(.+)') | % { $matches[1] }
-$refreshKey = ($output -match 'JWT_REFRESH_SECRET=(.+)') | % { $matches[1] }
+$accessKey = ($output -match 'JWT_ACCESS_SECRET=(.+)') | ForEach-Object { $matches[1] }
+$refreshKey = ($output -match 'JWT_REFRESH_SECRET=(.+)') | ForEach-Object { $matches[1] }
+if ($accessKey -and $refreshKey) {
+    $envContent = Get-Content .env -Raw
+    $envContent = $envContent -replace '(?m)^SECURECHAT_JWT_ACCESS_SECRET=.*$', "SECURECHAT_JWT_ACCESS_SECRET=$accessKey"
+    $envContent = $envContent -replace '(?m)^SECURECHAT_JWT_REFRESH_SECRET=.*$', "SECURECHAT_JWT_REFRESH_SECRET=$refreshKey"
+    Set-Content -Path .env -Value $envContent -NoNewline
+}
 
-# 4. Create .env
-Write-Host "Creating .env..." -ForegroundColor Yellow
-$envContent = @"
-SERVER_HOST=0.0.0.0
-SERVER_PORT=8080
-ENVIRONMENT=development
-
-MYSQL_HOST=localhost
-MYSQL_PORT=3306
-MYSQL_DATABASE=securechat
-MYSQL_USER=securechat
-MYSQL_PASSWORD=SecureChat2024!StrongPass
-MYSQL_MAX_OPEN_CONNS=25
-MYSQL_MAX_IDLE_CONNS=5
-MYSQL_CONN_MAX_LIFETIME=300
-
-JWT_ACCESS_SECRET=$accessKey
-JWT_REFRESH_SECRET=$refreshKey
-JWT_ACCESS_TTL=900
-JWT_REFRESH_TTL=2592000
-JWT_ISSUER=securechat
-JWT_AUDIENCE=securechat-android
-
-OTP_PROVIDER=mock
-OTP_LENGTH=6
-OTP_TTL=300
-OTP_MAX_ATTEMPTS=5
-OTP_RESEND_COOLDOWN=60
-
-CLOUDINARY_CLOUD_NAME=your_cloud_name
-CLOUDINARY_API_KEY=your_api_key
-CLOUDINARY_API_SECRET=your_api_secret
-CLOUDINARY_UPLOAD_FOLDER=securechat
-
-LOG_LEVEL=debug
-LOG_FORMAT=console
-"@
-
-$envContent | Out-File -FilePath .env -Encoding utf8
-
-# 5. Run migrations
+# 4. Run migrations against Neon
 Write-Host "Running migrations..." -ForegroundColor Yellow
-go install github.com/pressly/goose/v3/cmd/goose@latest
-goose -dir migrations mysql "securechat:SecureChat2024!StrongPass@tcp(localhost:3306)/securechat" up
+$env:PATH += ";$env:USERPROFILE\go\bin"
+goose -dir migrations postgres "$dbUrl" up
 
-# 6. Generate sqlc
-Write-Host "Generating sqlc..." -ForegroundColor Yellow
-go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
-sqlc generate
-
-# 7. Build and run
+# 5. Build and run
 Write-Host "Building server..." -ForegroundColor Yellow
 go build -o bin/server ./cmd/server
 

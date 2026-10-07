@@ -17,10 +17,10 @@ test-coverage:
 	go test -v -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
 
-# Run database migrations (reads .env; add &tls=true for TiDB Cloud)
+# Run database migrations (reads .env; connection string is SECURECHAT_DATABASE_URL)
 migrate:
 	@set -a; . ./.env; set +a; \
-	goose -dir migrations mysql "$${SECURECHAT_MYSQL_USER}:$${SECURECHAT_MYSQL_PASSWORD}@tcp($${SECURECHAT_MYSQL_HOST}:$${SECURECHAT_MYSQL_PORT})/$${SECURECHAT_MYSQL_DATABASE}?parseTime=true&tls=true" up
+	goose -dir migrations postgres "$${SECURECHAT_DATABASE_URL}" up
 
 # Generate sqlc code
 sqlc:

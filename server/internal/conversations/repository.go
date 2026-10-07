@@ -63,7 +63,7 @@ type MessagePreview struct {
 func (r *Repository) GetByID(ctx context.Context, id int64) (*Conversation, error) {
 	var conv Conversation
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, type, created_at, updated_at FROM conversations WHERE id = ?
+		SELECT id, type, created_at, updated_at FROM conversations WHERE id = $1
 	`, id).Scan(&conv.ID, &conv.Type, &conv.CreatedAt, &conv.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -79,9 +79,9 @@ func (r *Repository) GetByParticipant(ctx context.Context, userID int64, limit, 
 		SELECT c.id, c.type, c.created_at, c.updated_at
 		FROM conversations c
 		JOIN conversation_participants cp ON c.id = cp.conversation_id
-		WHERE cp.user_id = ? AND cp.left_at IS NULL
+		WHERE cp.user_id = $1 AND cp.left_at IS NULL
 		ORDER BY c.updated_at DESC
-		LIMIT ? OFFSET ?
+		LIMIT $2 OFFSET $3
 	`, userID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get conversations: %w", err)
@@ -128,7 +128,7 @@ func (r *Repository) getParticipants(ctx context.Context, conversationID int64) 
 		       u.id, u.phone_number, u.username, u.display_name, u.profile_image_id, u.is_online
 		FROM conversation_participants cp
 		JOIN users u ON cp.user_id = u.id
-		WHERE cp.conversation_id = ? AND cp.left_at IS NULL
+		WHERE cp.conversation_id = $1 AND cp.left_at IS NULL
 	`, conversationID)
 	if err != nil {
 		return nil, err
@@ -154,7 +154,7 @@ func (r *Repository) getLastMessage(ctx context.Context, conversationID int64) (
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, conversation_id, sender_id, type, text, media_id, status, created_at
 		FROM messages
-		WHERE conversation_id = ? AND deleted_at IS NULL
+		WHERE conversation_id = $1 AND deleted_at IS NULL
 		ORDER BY created_at DESC LIMIT 1
 	`, conversationID).Scan(&msg.ID, &msg.ConversationID, &msg.SenderID, &msg.Type, &msg.Text, &msg.MediaID, &msg.Status, &msg.CreatedAt)
 	if err != nil {
@@ -170,7 +170,7 @@ func (r *Repository) getUnreadCount(ctx context.Context, conversationID, userID 
 	var count int
 	err := r.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM messages
-		WHERE conversation_id = ? AND sender_id != ? AND read_at IS NULL AND deleted_at IS NULL
+		WHERE conversation_id = $1 AND sender_id != $2 AND read_at IS NULL AND deleted_at IS NULL
 	`, conversationID, userID).Scan(&count)
 	return count, err
 }
@@ -183,7 +183,7 @@ func (r *Repository) CreateDirectConversation(ctx context.Context, userID, other
 		JOIN conversation_participants cp1 ON c.id = cp1.conversation_id
 		JOIN conversation_participants cp2 ON c.id = cp2.conversation_id
 		WHERE c.type = 'direct'
-		  AND cp1.user_id = ? AND cp2.user_id = ?
+		  AND cp1.user_id = $1 AND cp2.user_id = $2
 		  AND cp1.left_at IS NULL AND cp2.left_at IS NULL
 	`, userID, otherUserID).Scan(&existingID)
 
@@ -201,25 +201,25 @@ func (r *Repository) CreateDirectConversation(ctx context.Context, userID, other
 	}
 	defer tx.Rollback()
 
-	result, err := tx.ExecContext(ctx, `
+	var convID int64
+	err = tx.QueryRowContext(ctx, `
 		INSERT INTO conversations (type, created_at, updated_at) VALUES ('direct', NOW(), NOW())
-	`)
+		RETURNING id
+	`).Scan(&convID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create conversation: %w", err)
 	}
 
-	convID, _ := result.LastInsertId()
-
 	// Add participants
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO conversation_participants (conversation_id, user_id, joined_at) VALUES (?, ?, NOW())
+		INSERT INTO conversation_participants (conversation_id, user_id, joined_at) VALUES ($1, $2, NOW())
 	`, convID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to add participant: %w", err)
 	}
 
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO conversation_participants (conversation_id, user_id, joined_at) VALUES (?, ?, NOW())
+		INSERT INTO conversation_participants (conversation_id, user_id, joined_at) VALUES ($1, $2, NOW())
 	`, convID, otherUserID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to add participant: %w", err)
@@ -265,7 +265,7 @@ func (r *Repository) DeleteConversation(ctx context.Context, conversationID, use
 	// Check if user is participant
 	var isParticipant bool
 	err := r.db.QueryRowContext(ctx, `
-		SELECT EXISTS(SELECT 1 FROM conversation_participants WHERE conversation_id = ? AND user_id = ? AND left_at IS NULL)
+		SELECT EXISTS(SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NULL)
 	`, conversationID, userID).Scan(&isParticipant)
 	if err != nil || !isParticipant {
 		return apperrors.ErrNotParticipant
@@ -273,7 +273,7 @@ func (r *Repository) DeleteConversation(ctx context.Context, conversationID, use
 
 	// Mark user as left
 	_, err = r.db.ExecContext(ctx, `
-		UPDATE conversation_participants SET left_at = NOW() WHERE conversation_id = ? AND user_id = ?
+		UPDATE conversation_participants SET left_at = NOW() WHERE conversation_id = $1 AND user_id = $2
 	`, conversationID, userID)
 	return err
 }

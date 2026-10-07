@@ -7,7 +7,7 @@ This document provides guidelines for AI agents and developers working on the Se
 SecureChat is a private messaging application with:
 - Native Android (Kotlin, Jetpack Compose)
 - Go Backend (Fiber, WebSocket)
-- MySQL Database
+- PostgreSQL Database (Neon)
 - Cloudinary Media Storage
 - Optional Ollama AI
 
@@ -71,7 +71,7 @@ internal/
   ├── otp/                  # OTP service
   ├── ai/                   # Ollama client
   ├── middleware/           # Auth, logging, errors
-  └── database/             # MySQL, sqlc, migrations
+  └── database/             # PostgreSQL, sqlc, migrations
 pkg/
   ├── jwt/                  # Token management
   ├── crypto/               # Hashing, OTP generation
@@ -100,7 +100,7 @@ pkg/
 ### Go Dependencies (go.mod)
 - Fiber v2.52.0
 - WebSocket v2.1.0
-- pgx/v5 (MySQL driver)
+- pgx/v5 (PostgreSQL driver)
 - sqlc (code generation)
 - JWT v5, bcrypt
 - Cloudinary Go SDK v2
@@ -122,7 +122,7 @@ pkg/
 - ✅ OTP bcrypt hash, 5-min expiry, rate limiting
 - ✅ Cloudinary secrets only on backend
 - ✅ Signed upload URLs for direct Android → Cloudinary
-- ✅ MySQL not exposed publicly
+- ✅ PostgreSQL (Neon) not exposed publicly
 - ✅ Structured logging without secrets
 
 ## Testing Standards
@@ -136,7 +136,7 @@ pkg/
 - Unit tests: Services, Handlers, Crypto
 - Integration: API, WebSocket, Database, Cloudinary
 - Test files in `tests/` and `*_test.go`
-- Use testcontainers for MySQL
+- Use testcontainers for PostgreSQL
 
 ## Git Workflow
 
@@ -280,7 +280,7 @@ go test ./...
 sqlc generate
 
 # Run migrations
-goose -dir migrations mysql "dsn" up
+goose -dir migrations postgres "$SECURECHAT_DATABASE_URL" up
 
 # Build binary
 go build -o bin/server ./cmd/server

@@ -274,7 +274,7 @@ func (c *Client) handleAuthenticate(payload json.RawMessage) {
 	// Verify session is still active
 	var isActive bool
 	err = c.hub.db.QueryRowContext(context.Background(), `
-		SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ? AND user_id = ? AND revoked_at IS NULL AND expires_at > NOW())
+		SELECT EXISTS(SELECT 1 FROM sessions WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL AND expires_at > NOW())
 	`, claims.SessionID, claims.UserID).Scan(&isActive)
 	if err != nil || !isActive {
 		c.sendError("SESSION_REVOKED", "Session has been revoked")
@@ -317,7 +317,7 @@ func (c *Client) handleMessageSend(tempID string, payload json.RawMessage) {
 	// Verify user is participant in conversation
 	var isParticipant bool
 	err := c.hub.db.QueryRowContext(context.Background(), `
-		SELECT EXISTS(SELECT 1 FROM conversation_participants WHERE conversation_id = ? AND user_id = ? AND left_at IS NULL)
+		SELECT EXISTS(SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NULL)
 	`, msgSend.ConversationID, c.userID).Scan(&isParticipant)
 	if err != nil || !isParticipant {
 		c.sendError("NOT_PARTICIPANT", "Not a participant in this conversation")
@@ -513,7 +513,7 @@ func (c *Client) handleMessageDelete(payload json.RawMessage) {
 func (c *Client) isParticipant(conversationID int64) bool {
 	var isParticipant bool
 	err := c.hub.db.QueryRowContext(context.Background(), `
-		SELECT EXISTS(SELECT 1 FROM conversation_participants WHERE conversation_id = ? AND user_id = ? AND left_at IS NULL)
+		SELECT EXISTS(SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NULL)
 	`, conversationID, c.userID).Scan(&isParticipant)
 	return err == nil && isParticipant
 }
@@ -545,7 +545,7 @@ func (h *Hub) broadcastToConversation(conversationID int64, exclude *Client, msg
 	data, _ := json.Marshal(msg)
 
 	rows, err := h.db.QueryContext(context.Background(), `
-		SELECT user_id FROM conversation_participants WHERE conversation_id = ? AND left_at IS NULL
+		SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND left_at IS NULL
 	`, conversationID)
 	if err != nil {
 		logger.Log.Error("Failed to load conversation participants", zap.Int64("conversation_id", conversationID), zap.Error(err))
@@ -585,7 +585,7 @@ func (h *Hub) broadcastToConversation(conversationID int64, exclude *Client, msg
 
 func (h *Hub) updateUserOnlineStatus(userID int64, isOnline bool) {
 	h.db.ExecContext(context.Background(), `
-		UPDATE users SET is_online = ?, last_seen = NOW() WHERE id = ?
+		UPDATE users SET is_online = $1, last_seen = NOW() WHERE id = $2
 	`, isOnline, userID)
 
 	// Broadcast presence update

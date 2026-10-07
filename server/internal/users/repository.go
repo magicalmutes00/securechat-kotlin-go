@@ -46,7 +46,7 @@ func (r *Repository) GetByID(ctx context.Context, id int64) (*User, error) {
 	var user User
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, phone_number, email, username, display_name, profile_image_id, last_seen, is_online, created_at, updated_at
-		FROM users WHERE id = ?
+		FROM users WHERE id = $1
 	`, id).Scan(
 		&user.ID, &user.PhoneNumber, &user.Email, &user.Username, &user.DisplayName,
 		&user.ProfileImageID, &user.LastSeen, &user.IsOnline, &user.CreatedAt, &user.UpdatedAt,
@@ -64,7 +64,7 @@ func (r *Repository) UpdateProfile(ctx context.Context, id int64, displayName, u
 	// Check if username is taken
 	if username != "" {
 		var existingID int64
-		err := r.db.QueryRowContext(ctx, `SELECT id FROM users WHERE username = ? AND id != ?`, username, id).Scan(&existingID)
+		err := r.db.QueryRowContext(ctx, `SELECT id FROM users WHERE username = $1 AND id != $2`, username, id).Scan(&existingID)
 		if err == nil {
 			return nil, apperrors.ErrUsernameTaken
 		}
@@ -74,7 +74,7 @@ func (r *Repository) UpdateProfile(ctx context.Context, id int64, displayName, u
 	}
 
 	_, err := r.db.ExecContext(ctx, `
-		UPDATE users SET display_name = ?, username = ?, updated_at = NOW() WHERE id = ?
+		UPDATE users SET display_name = $1, username = $2, updated_at = NOW() WHERE id = $3
 	`, displayName, nullString(username), id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update profile: %w", err)
@@ -85,7 +85,7 @@ func (r *Repository) UpdateProfile(ctx context.Context, id int64, displayName, u
 
 func (r *Repository) UpdateAvatar(ctx context.Context, id int64, imageID int64) (*User, error) {
 	_, err := r.db.ExecContext(ctx, `
-		UPDATE users SET profile_image_id = ?, updated_at = NOW() WHERE id = ?
+		UPDATE users SET profile_image_id = $1, updated_at = NOW() WHERE id = $2
 	`, imageID, id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update avatar: %w", err)
@@ -103,8 +103,8 @@ func (r *Repository) Search(ctx context.Context, query string, limit int) ([]*Us
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, phone_number, email, username, display_name, profile_image_id, last_seen, is_online, created_at, updated_at
 		FROM users 
-		WHERE username LIKE ? OR display_name LIKE ? OR phone_number LIKE ?
-		LIMIT ?
+		WHERE username LIKE $1 OR display_name LIKE $2 OR phone_number LIKE $3
+		LIMIT $4
 	`, pattern, pattern, pattern, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search users: %w", err)
@@ -126,6 +126,7 @@ func (r *Repository) Search(ctx context.Context, query string, limit int) ([]*Us
 }
 
 // escapeLike escapes the SQL LIKE wildcards (% and _) and the escape char.
+// PostgreSQL's LIKE treats backslash as the default escape character.
 func escapeLike(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `%`, `\%`)
@@ -137,7 +138,7 @@ func (r *Repository) GetSettings(ctx context.Context, userID int64) (*UserSettin
 	var settings UserSettings
 	err := r.db.QueryRowContext(ctx, `
 		SELECT user_id, theme, notifications_enabled, media_auto_download, language, created_at, updated_at
-		FROM user_settings WHERE user_id = ?
+		FROM user_settings WHERE user_id = $1
 	`, userID).Scan(
 		&settings.UserID, &settings.Theme, &settings.NotificationsEnabled, &settings.MediaAutoDownload, &settings.Language, &settings.CreatedAt, &settings.UpdatedAt,
 	)
@@ -160,10 +161,14 @@ func (r *Repository) GetSettings(ctx context.Context, userID int64) (*UserSettin
 func (r *Repository) UpdateSettings(ctx context.Context, settings *UserSettings) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO user_settings (user_id, theme, notifications_enabled, media_auto_download, language, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, NOW(), NOW())
-		ON DUPLICATE KEY UPDATE theme = ?, notifications_enabled = ?, media_auto_download = ?, language = ?, updated_at = NOW()
-	`, settings.UserID, settings.Theme, settings.NotificationsEnabled, settings.MediaAutoDownload, settings.Language,
-		settings.Theme, settings.NotificationsEnabled, settings.MediaAutoDownload, settings.Language)
+		VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+		ON CONFLICT (user_id) DO UPDATE SET
+			theme = EXCLUDED.theme,
+			notifications_enabled = EXCLUDED.notifications_enabled,
+			media_auto_download = EXCLUDED.media_auto_download,
+			language = EXCLUDED.language,
+			updated_at = NOW()
+	`, settings.UserID, settings.Theme, settings.NotificationsEnabled, settings.MediaAutoDownload, settings.Language)
 	return err
 }
 

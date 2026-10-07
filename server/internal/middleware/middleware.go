@@ -39,7 +39,7 @@ func (c *DBSessionChecker) IsSessionActive(ctx context.Context, userID, sessionI
 	err := c.db.QueryRowContext(ctx, `
 		SELECT EXISTS(
 			SELECT 1 FROM sessions
-			WHERE id = ? AND user_id = ? AND revoked_at IS NULL AND expires_at > NOW()
+			WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL AND expires_at > NOW()
 		)
 	`, sessionID, userID).Scan(&isActive)
 	return isActive, err

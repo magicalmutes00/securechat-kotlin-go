@@ -18,7 +18,7 @@ A production-quality private messaging application with end-to-end encryption, o
                           ┌──────────────────────┼──────────────────────┐
                           ▼                      ▼                      ▼
                    ┌─────────────┐         ┌─────────────┐         ┌─────────────┐
-                   │   MySQL 8+  │         │ Cloudinary  │         │   Ollama    │
+                   │  Neon (PG)  │         │ Cloudinary  │         │   Ollama    │
                    │             │         │             │         │  (Optional) │
                    │ • Users     │         │ • Images    │         │             │
                    │ • Messages  │         │ • Videos    │         │ • AI Assist │
@@ -44,7 +44,7 @@ A production-quality private messaging application with end-to-end encryption, o
 ## Quick Start
 
 ### Prerequisites
-- **Backend**: Go 1.22+, MySQL 8.0+, Ollama (optional)
+- **Backend**: Go 1.25+, PostgreSQL (Neon), Ollama (optional)
 - **Android**: Android Studio Ladybug+, JDK 21, Android SDK 34
 - **Cloudinary**: Account for media storage
 
@@ -62,9 +62,9 @@ go run ./cmd/genkeys
 # 2. Install tools
 go install github.com/pressly/goose/v3/cmd/goose@latest
 
-# 3. Setup database (or use docker compose up mysql from the repo root)
-mysql -u root -p -e "CREATE DATABASE securechat CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-goose -dir migrations mysql "user:pass@tcp(localhost:3306)/securechat" up
+# 3. Setup database — create a Neon database and put its connection
+#    string in .env as SECURECHAT_DATABASE_URL, then:
+goose -dir migrations postgres "$SECURECHAT_DATABASE_URL" up
 
 # 4. Run
 go run ./cmd/server
@@ -114,7 +114,7 @@ securechat/
 │   │   ├── otp/             # OTP service
 │   │   ├── ai/              # Ollama client
 │   │   ├── middleware/      # Auth, logging, errors
-│   │   └── database/        # MySQL, sqlc, migrations
+│   │   └── database/        # PostgreSQL, sqlc, migrations
 │   ├── pkg/                 # Shared packages (jwt, crypto, logger, errors)
 │   ├── migrations/          # SQL migrations
 │   ├── config/              # Configuration
@@ -137,7 +137,7 @@ securechat/
 | 1 | Architecture & Project Initialization | ✅ Complete |
 | 2 | Android Foundation (Compose, Hilt, Navigation) | ✅ Complete |
 | 3 | Go Backend Foundation (Fiber, Config, Logging) | ✅ Complete |
-| 4 | MySQL Schema & Repositories | ✅ Complete |
+| 4 | PostgreSQL Schema & Repositories | ✅ Complete |
 | 5 | Authentication (OTP, JWT, Keystore) | ✅ Complete |
 | 6 | WebSocket Infrastructure | 🔶 Wired, needs integration testing |
 | 7 | Chat Core (Conversations, Messages) | 🔶 Core flows wired, UI polish pending |
@@ -161,7 +161,7 @@ securechat/
 
 ### Backend
 - Go 1.22, Fiber v2, WebSocket
-- MySQL 8.0, sqlc (type-safe SQL), goose (migrations)
+- PostgreSQL 16 (Neon), goose (migrations), sqlc (type-safe SQL)
 - JWT (RS256), bcrypt, Twilio (SMS)
 - Cloudinary Go SDK, Zap (structured logging)
 - Viper (config), UUID/KSUID
@@ -169,7 +169,7 @@ securechat/
 ### Infrastructure
 - Cloudinary (media storage & transformations)
 - Ollama (local AI, optional)
-- MySQL 8+ (primary database)
+- Neon (PostgreSQL) — primary database, pooled connection via `SECURECHAT_DATABASE_URL`
 - Reverse proxy (Caddy/nginx) for TLS termination
 
 ## Security Model
@@ -180,7 +180,7 @@ securechat/
 - **Short-lived tokens** - 15min access, 30day refresh with rotation
 - **OTP security** - bcrypt hash, 5-min expiry, per-number cooldown
 - **HTTPS/WSS only** - Cleartext only for LAN development
-- **Database isolation** - MySQL not exposed publicly
+- **Database isolation** - PostgreSQL (Neon) not exposed publicly
 
 ## API Endpoints
 

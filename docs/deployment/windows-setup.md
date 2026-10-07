@@ -27,40 +27,22 @@ choco install golang
 
 ---
 
-## 2. Install MySQL 8.0+
+## 2. Set Up PostgreSQL (Neon)
 
-### Option A: MySQL Installer (Recommended)
-1. Download MySQL Installer from https://dev.mysql.com/downloads/installer/
-2. Run installer, select "Server only" or "Full"
-3. Configure:
-   - **Authentication Method**: Use Strong Password Encryption (recommended)
-   - **Root Password**: Set a strong password
-   - **Windows Service**: Enable "Configure MySQL Server as a Windows Service"
-   - **Port**: 3306 (default)
-4. Complete installation
+The backend uses a hosted PostgreSQL database on [Neon](https://neon.tech) — no local database install is required.
 
-### Option B: Chocolatey
+1. Create a free account at https://neon.tech
+2. Create a project (region closest to you)
+3. Copy the pooled connection string (starts with `postgresql://...-pooler...` and includes `?sslmode=require`)
+4. Put it in `server/.env` as `SECURECHAT_DATABASE_URL`
+
+### Optional: local PostgreSQL (offline development)
+If you prefer a local database instead of Neon:
 ```powershell
-choco install mysql
+docker run -d --name securechat-postgres -p 5432:5432 -e POSTGRES_PASSWORD=securechat -e POSTGRES_DB=securechat postgres:16
 ```
-
-### Option C: winget
-```powershell
-winget install Oracle.MySQL
-```
-
-### Post-installation
-```powershell
-# Connect to MySQL
-mysql -u root -p
-
-# Create database and user
-CREATE DATABASE securechat CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'securechat'@'%' IDENTIFIED BY 'your_strong_password';
-GRANT ALL PRIVILEGES ON securechat.* TO 'securechat'@'%';
-FLUSH PRIVILEGES;
-EXIT;
-```
+Then set `SECURECHAT_DATABASE_URL=postgres://postgres:securechat@localhost:5432/securechat?sslmode=disable` in `server/.env`
+(or run `docker compose up postgres` from the repo root).
 
 ---
 
@@ -112,11 +94,12 @@ cd securechat
 # Server configuration
 cd server
 copy .env.example .env
-# Edit .env with your values (use notepad or VS Code)
+# Edit .env: set SECURECHAT_DATABASE_URL to your Neon connection string
 notepad .env
 
 # Run migrations
-goose -dir migrations mysql "securechat:your_password@tcp(localhost:3306)/securechat" up
+$envUrl = (Select-String -Path .env -Pattern '^SECURECHAT_DATABASE_URL=(.+)$').Matches.Groups[1].Value
+goose -dir migrations postgres $envUrl up
 
 # Generate SQL code
 sqlc generate
@@ -124,6 +107,9 @@ sqlc generate
 # Start server
 go run cmd/server/main.go
 ```
+
+The server also runs pending migrations automatically on startup, so the manual
+`goose up` step is only needed when you want to migrate without starting the API.
 
 ---
 
@@ -198,21 +184,22 @@ curl -X POST http://localhost:8080/api/v1/auth/send-otp `
 
 ### Test Database
 ```powershell
-mysql -u securechat -p securechat -e "SHOW TABLES;"
+$envUrl = (Select-String -Path .env -Pattern '^SECURECHAT_DATABASE_URL=(.+)$').Matches.Groups[1].Value
+goose -dir migrations postgres $envUrl status
 ```
 
 ---
 
 ## 9. Common Issues
 
-### MySQL Connection Refused
-- Ensure MySQL service is running: `services.msc` → MySQL80 → Start
-- Check port 3306 is not blocked by firewall
-- Verify user has `%` host permission
+### Neon Connection Fails
+- Verify `SECURECHAT_DATABASE_URL` includes `?sslmode=require`
+- Check the connection string was copied in full (Neon truncates in the UI — use the copy button)
+- Free-tier compute autosuspends after inactivity: the first request may take a few seconds
 
 ### Goose Migration Fails
-- Ensure database exists and user has privileges
-- Check DSN format in command
+- Ensure the connection string points at the right database (`/neondb`)
+- Check for a leftover schema: if tables from another project exist in `public`, drop them first (`DROP SCHEMA public CASCADE; CREATE SCHEMA public;`)
 
 ### Android Build Fails
 - Run `./gradlew clean` and retry
@@ -229,18 +216,15 @@ mysql -u securechat -p securechat -e "SHOW TABLES;"
 ## 10. Useful Commands
 
 ```powershell
-# Stop MySQL service
-Stop-Service MySQL80
-
-# Start MySQL service
-Start-Service MySQL80
-
-# View MySQL logs
-Get-EventLog -LogName Application -Source MySQL -Newest 50
+# Migration status
+$envUrl = (Select-String -Path .env -Pattern '^SECURECHAT_DATABASE_URL=(.+)$').Matches.Groups[1].Value
+goose -dir migrations postgres $envUrl status
 
 # View Go server logs (if running as service)
 # Check the terminal where go run is executing
 
 # Reset database (DANGEROUS - deletes all data)
-mysql -u root -p -e "DROP DATABASE securechat; CREATE DATABASE securechat CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+# Run in the Neon SQL Editor or via psql:
+#   DROP SCHEMA public CASCADE; CREATE SCHEMA public;
+# then restart the server (migrations re-run automatically)
 ```

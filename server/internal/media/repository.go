@@ -49,15 +49,16 @@ type CompleteUploadRequest struct {
 }
 
 func (r *Repository) Create(ctx context.Context, media *MediaRecord) (int64, error) {
-	result, err := r.db.ExecContext(ctx, `
+	var id int64
+	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO media (user_id, cloudinary_public_id, resource_type, secure_url, original_filename, mime_type, file_size, width, height, duration, sha256, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-	`, media.UserID, media.CloudinaryPublicID, media.ResourceType, media.SecureURL, media.OriginalFilename, media.MimeType, media.FileSize, media.Width, media.Height, media.Duration, media.SHA256)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+		RETURNING id
+	`, media.UserID, media.CloudinaryPublicID, media.ResourceType, media.SecureURL, media.OriginalFilename, media.MimeType, media.FileSize, media.Width, media.Height, media.Duration, media.SHA256).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create media record: %w", err)
 	}
 
-	id, _ := result.LastInsertId()
 	return id, nil
 }
 
@@ -65,7 +66,7 @@ func (r *Repository) GetByID(ctx context.Context, id int64) (*MediaRecord, error
 	var media MediaRecord
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, user_id, cloudinary_public_id, resource_type, secure_url, original_filename, mime_type, file_size, width, height, duration, sha256, thumbnail_url, created_at
-		FROM media WHERE id = ?
+		FROM media WHERE id = $1
 	`, id).Scan(&media.ID, &media.UserID, &media.CloudinaryPublicID, &media.ResourceType, &media.SecureURL, &media.OriginalFilename, &media.MimeType, &media.FileSize, &media.Width, &media.Height, &media.Duration, &media.SHA256, &media.ThumbnailURL, &media.CreatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -77,7 +78,7 @@ func (r *Repository) GetByID(ctx context.Context, id int64) (*MediaRecord, error
 }
 
 func (r *Repository) Delete(ctx context.Context, id int64) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM media WHERE id = ?`, id)
+	_, err := r.db.ExecContext(ctx, `DELETE FROM media WHERE id = $1`, id)
 	return err
 }
 
@@ -85,7 +86,7 @@ func (r *Repository) Delete(ctx context.Context, id int64) error {
 // Ownership is checked so a client cannot attach another user's media.
 func (r *Repository) LinkToMessage(ctx context.Context, mediaID, messageID, userID int64) error {
 	result, err := r.db.ExecContext(ctx, `
-		UPDATE media SET message_id = ? WHERE id = ? AND user_id = ?
+		UPDATE media SET message_id = $1 WHERE id = $2 AND user_id = $3
 	`, messageID, mediaID, userID)
 	if err != nil {
 		return fmt.Errorf("failed to link media to message: %w", err)
@@ -100,7 +101,7 @@ func (r *Repository) GetByMessageID(ctx context.Context, messageID int64) (*Medi
 	var media MediaRecord
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, user_id, cloudinary_public_id, resource_type, secure_url, original_filename, mime_type, file_size, width, height, duration, sha256, thumbnail_url, created_at
-		FROM media WHERE message_id = ?
+		FROM media WHERE message_id = $1
 	`, messageID).Scan(&media.ID, &media.UserID, &media.CloudinaryPublicID, &media.ResourceType, &media.SecureURL, &media.OriginalFilename, &media.MimeType, &media.FileSize, &media.Width, &media.Height, &media.Duration, &media.SHA256, &media.ThumbnailURL, &media.CreatedAt)
 	if err != nil {
 		return nil, err

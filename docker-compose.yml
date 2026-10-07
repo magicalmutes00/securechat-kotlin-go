@@ -13,35 +13,30 @@ services:
     # GPU reservation is opt-in: create docker-compose.override.yml with the
     # nvidia device block if your host has CUDA support.
 
-  # MySQL (optional - if not installing locally)
-  mysql:
-    image: mysql:8.0
-    container_name: securechat-mysql
+  # PostgreSQL (optional — production uses Neon; set SECURECHAT_DATABASE_URL
+  # in server/.env to point at Neon instead of this container).
+  # Migrations are NOT run here: the server runs goose on startup.
+  postgres:
+    image: postgres:16
+    container_name: securechat-postgres
     ports:
-      - "3306:3306"
+      - "5432:5432"
     environment:
-      # Credentials are supplied via .env next to this file (MYSQL_ROOT_PASSWORD etc.)
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-securechat}
-      MYSQL_USER: ${MYSQL_USER:-securechat}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-securechat}
+      POSTGRES_USER: ${POSTGRES_USER:-securechat}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     volumes:
-      - mysql_data:/var/lib/mysql
-      - ./server/migrations:/docker-entrypoint-initdb.d
-    command:
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-      - --max-connections=100
+      - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
 volumes:
   ollama_data:
-  mysql_data:
+  postgres_data:
 
 networks:
   default:

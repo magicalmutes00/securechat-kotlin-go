@@ -26,7 +26,7 @@ func (s *Service) CreateMessage(ctx context.Context, conversationID, senderID in
 	// Verify participant
 	var isParticipant bool
 	err := s.repo.db.QueryRowContext(ctx, `
-		SELECT EXISTS(SELECT 1 FROM conversation_participants WHERE conversation_id = ? AND user_id = ? AND left_at IS NULL)
+		SELECT EXISTS(SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NULL)
 	`, conversationID, senderID).Scan(&isParticipant)
 	if err != nil || !isParticipant {
 		return nil, errors.ErrNotParticipant

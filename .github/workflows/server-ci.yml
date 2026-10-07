@@ -16,17 +16,16 @@ jobs:
     timeout-minutes: 30
 
     services:
-      mysql:
-        image: mysql:8.0
+      postgres:
+        image: postgres:16
         env:
-          MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: securechat
-          MYSQL_USER: securechat
-          MYSQL_PASSWORD: testpass
+          POSTGRES_USER: securechat
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: securechat
         ports:
-          - 3306:3306
+          - 5432:5432
         options: >-
-          --health-cmd="mysqladmin ping -h localhost"
+          --health-cmd="pg_isready -U securechat -d securechat"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
@@ -38,14 +37,11 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.25'
           cache: true
 
       - name: Install goose
         run: go install github.com/pressly/goose/v3/cmd/goose@latest
-
-      - name: Install sqlc
-        run: go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
 
       - name: Cache Go modules
         uses: actions/cache@v4
@@ -59,11 +55,8 @@ jobs:
       - name: Download dependencies
         run: cd server && go mod download
 
-      - name: Generate sqlc code
-        run: cd server && sqlc generate
-
       - name: Run migrations
-        run: cd server && goose -dir migrations mysql "securechat:testpass@tcp(localhost:3306)/securechat" up
+        run: cd server && goose -dir migrations postgres "postgres://securechat:testpass@localhost:5432/securechat?sslmode=disable" up
 
       - name: Build
         run: cd server && go build -v ./...
@@ -88,7 +81,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.25'
 
       - name: Run govulncheck
         run: |

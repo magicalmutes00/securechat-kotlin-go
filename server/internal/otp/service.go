@@ -45,7 +45,7 @@ func (s *Service) SendOTP(ctx context.Context, phoneNumber string) (*SendOTPResu
 	var createdAt time.Time
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, created_at FROM otp_requests 
-		WHERE phone_number = ? AND verified_at IS NULL AND expires_at > NOW()
+		WHERE phone_number = $1 AND verified_at IS NULL AND expires_at > NOW()
 		ORDER BY created_at DESC LIMIT 1
 	`, phoneNumber).Scan(&existingID, &createdAt)
 
@@ -70,21 +70,21 @@ func (s *Service) SendOTP(ctx context.Context, phoneNumber string) (*SendOTPResu
 
 	// Store OTP request
 	expiresAt := time.Now().Add(s.ttl)
-	result, err := s.db.ExecContext(ctx, `
+	var otpID int64
+	err = s.db.QueryRowContext(ctx, `
 		INSERT INTO otp_requests (phone_number, otp_hash, expires_at, attempt_count, created_at)
-		VALUES (?, ?, ?, 0, NOW())
-	`, phoneNumber, hashedOTP, expiresAt)
+		VALUES ($1, $2, $3, 0, NOW())
+		RETURNING id
+	`, phoneNumber, hashedOTP, expiresAt).Scan(&otpID)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to store OTP: %w", err)
 	}
 
-	otpID, _ := result.LastInsertId()
-
 	// Send via provider
 if err := s.provider.Send(ctx, phoneNumber, otp); err != nil {
 			// Mark as failed but don't expose OTP
-			s.db.ExecContext(ctx, `UPDATE otp_requests SET verified_at = NOW() WHERE id = ?`, otpID)
+			s.db.ExecContext(ctx, `UPDATE otp_requests SET verified_at = NOW() WHERE id = $1`, otpID)
 			logger.Log.Error("Failed to send OTP", zap.String("provider", s.provider.Name()), zap.Error(err))
 			return nil, apperrors.ErrInternalServer
 		}
@@ -108,7 +108,7 @@ func (s *Service) VerifyOTP(ctx context.Context, phoneNumber, otp string) (bool,
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, otp_hash, attempt_count, expires_at, verified_at
 		FROM otp_requests
-		WHERE phone_number = ? AND verified_at IS NULL
+		WHERE phone_number = $1 AND verified_at IS NULL
 		ORDER BY created_at DESC LIMIT 1
 	`, phoneNumber).Scan(&id, &hashedOTP, &attemptCount, &expiresAt, &verifiedAt)
 
@@ -137,12 +137,12 @@ func (s *Service) VerifyOTP(ctx context.Context, phoneNumber, otp string) (bool,
 	// Verify OTP
 	if !crypto.VerifyOTP(hashedOTP, otp) {
 		// Increment attempt count
-		s.db.ExecContext(ctx, `UPDATE otp_requests SET attempt_count = attempt_count + 1 WHERE id = ?`, id)
+		s.db.ExecContext(ctx, `UPDATE otp_requests SET attempt_count = attempt_count + 1 WHERE id = $1`, id)
 		return false, apperrors.ErrInvalidOTP
 	}
 
 	// Mark as verified
-	_, err = s.db.ExecContext(ctx, `UPDATE otp_requests SET verified_at = NOW() WHERE id = ?`, id)
+	_, err = s.db.ExecContext(ctx, `UPDATE otp_requests SET verified_at = NOW() WHERE id = $1`, id)
 	if err != nil {
 		return false, fmt.Errorf("failed to mark OTP verified: %w", err)
 	}

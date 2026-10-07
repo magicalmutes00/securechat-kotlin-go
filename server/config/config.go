@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 
 	"github.com/spf13/viper"
@@ -9,7 +10,7 @@ import (
 
 type Config struct {
 	Server   ServerConfig
-	MySQL    MySQLConfig
+	Database DatabaseConfig
 	JWT      JWTConfig
 	OTP      OTPConfig
 	Google   GoogleConfig
@@ -24,16 +25,20 @@ type ServerConfig struct {
 	Env  string
 }
 
-type MySQLConfig struct {
+// DatabaseConfig holds a PostgreSQL connection. URL (e.g. a Neon pooled
+// connection string) takes precedence; the discrete fields are a fallback for
+// local development where a full URL is inconvenient to assemble.
+type DatabaseConfig struct {
+	URL             string
 	Host            string
 	Port            string
-	Database        string
+	Name            string
 	User            string
 	Password        string
+	SSLMode         string
 	MaxOpenConns    int
 	MaxIdleConns    int
 	ConnMaxLifetime int
-	TLS             bool
 }
 
 type JWTConfig struct {
@@ -90,16 +95,18 @@ func Load() (*Config, error) {
 	viper.SetDefault("securechat_server_host", "0.0.0.0")
 	viper.SetDefault("securechat_server_port", "8080")
 	viper.SetDefault("securechat_environment", "development")
-	viper.SetDefault("securechat_mysql_host", "localhost")
-	viper.SetDefault("securechat_mysql_port", "3306")
-	viper.SetDefault("securechat_mysql_database", "securechat")
-	viper.SetDefault("securechat_mysql_user", "securechat")
+	// Full connection URL (Neon, Render, etc.) — preferred over discrete fields.
+	viper.SetDefault("securechat_database_url", "")
+	viper.SetDefault("securechat_postgres_host", "localhost")
+	viper.SetDefault("securechat_postgres_port", "5432")
+	viper.SetDefault("securechat_postgres_database", "securechat")
+	viper.SetDefault("securechat_postgres_user", "securechat")
 	// No default password: production must supply one (validated below).
-	viper.SetDefault("securechat_mysql_password", "")
-	viper.SetDefault("securechat_mysql_max_open_conns", 25)
-	viper.SetDefault("securechat_mysql_max_idle_conns", 5)
-	viper.SetDefault("securechat_mysql_conn_max_lifetime", 300)
-	viper.SetDefault("securechat_mysql_tls", false)
+	viper.SetDefault("securechat_postgres_password", "")
+	viper.SetDefault("securechat_postgres_sslmode", "require")
+	viper.SetDefault("securechat_database_max_open_conns", 25)
+	viper.SetDefault("securechat_database_max_idle_conns", 5)
+	viper.SetDefault("securechat_database_conn_max_lifetime", 300)
 	viper.SetDefault("securechat_jwt_access_ttl", 900)
 	viper.SetDefault("securechat_jwt_refresh_ttl", 2592000)
 	viper.SetDefault("securechat_jwt_issuer", "securechat")
@@ -141,15 +148,20 @@ func Load() (*Config, error) {
 		cfg.Server.Port = "8080"
 	}
 
-	cfg.MySQL.Host = viper.GetString("securechat_mysql_host")
-	cfg.MySQL.Port = viper.GetString("securechat_mysql_port")
-	cfg.MySQL.Database = viper.GetString("securechat_mysql_database")
-	cfg.MySQL.User = viper.GetString("securechat_mysql_user")
-	cfg.MySQL.Password = viper.GetString("securechat_mysql_password")
-	cfg.MySQL.MaxOpenConns = viper.GetInt("securechat_mysql_max_open_conns")
-	cfg.MySQL.MaxIdleConns = viper.GetInt("securechat_mysql_max_idle_conns")
-	cfg.MySQL.ConnMaxLifetime = viper.GetInt("securechat_mysql_conn_max_lifetime")
-	cfg.MySQL.TLS = viper.GetBool("securechat_mysql_tls")
+	cfg.Database.URL = viper.GetString("securechat_database_url")
+	// Standard DATABASE_URL convention (Render/Neon) as a fallback.
+	if cfg.Database.URL == "" {
+		cfg.Database.URL = os.Getenv("DATABASE_URL")
+	}
+	cfg.Database.Host = viper.GetString("securechat_postgres_host")
+	cfg.Database.Port = viper.GetString("securechat_postgres_port")
+	cfg.Database.Name = viper.GetString("securechat_postgres_database")
+	cfg.Database.User = viper.GetString("securechat_postgres_user")
+	cfg.Database.Password = viper.GetString("securechat_postgres_password")
+	cfg.Database.SSLMode = viper.GetString("securechat_postgres_sslmode")
+	cfg.Database.MaxOpenConns = viper.GetInt("securechat_database_max_open_conns")
+	cfg.Database.MaxIdleConns = viper.GetInt("securechat_database_max_idle_conns")
+	cfg.Database.ConnMaxLifetime = viper.GetInt("securechat_database_conn_max_lifetime")
 
 	cfg.JWT.AccessSecret = viper.GetString("securechat_jwt_access_secret")
 	cfg.JWT.RefreshSecret = viper.GetString("securechat_jwt_refresh_secret")
@@ -203,8 +215,8 @@ func (c *Config) validate() error {
 		if c.JWT.RefreshSecret == "" {
 			return fmt.Errorf("SECURECHAT_JWT_REFRESH_SECRET is required in production")
 		}
-		if c.MySQL.Password == "" {
-			return fmt.Errorf("SECURECHAT_MYSQL_PASSWORD is required in production")
+		if c.Database.URL == "" && c.Database.Password == "" {
+			return fmt.Errorf("SECURECHAT_DATABASE_URL is required in production")
 		}
 		if c.OTP.Provider == "mock" {
 			return fmt.Errorf("SECURECHAT_OTP_PROVIDER=mock is not allowed in production")
@@ -213,12 +225,23 @@ func (c *Config) validate() error {
 	return nil
 }
 
+// GetDSN returns a PostgreSQL connection URL. The configured URL (Neon-style
+// pooled connection string) wins; otherwise one is assembled from the discrete
+// fields so local development needs no URL juggling.
 func (c *Config) GetDSN() string {
-	dsn := c.MySQL.User + ":" + c.MySQL.Password + "@tcp(" + c.MySQL.Host + ":" + c.MySQL.Port + ")/" + c.MySQL.Database + "?parseTime=true&charset=utf8mb4&collation=utf8mb4_unicode_ci"
-	if c.MySQL.TLS {
-		dsn += "&tls=true"
+	if c.Database.URL != "" {
+		return c.Database.URL
 	}
-	return dsn
+	u := &url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(c.Database.User, c.Database.Password),
+		Host:   c.Database.Host + ":" + c.Database.Port,
+		Path:   "/" + c.Database.Name,
+	}
+	q := url.Values{}
+	q.Set("sslmode", c.Database.SSLMode)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 func (c *Config) ServerAddr() string {

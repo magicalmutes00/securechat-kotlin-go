@@ -19,20 +19,19 @@ sudo apt update && sudo apt upgrade -y
 ## 2. Install Go
 
 ```bash
-# Install Go 1.22+
+# Install Go 1.25+
 sudo apt install -y golang-go
 
 # Verify
 go version
-# Should output: go version go1.22.x linux/amd64
 ```
 
 ### Alternative: Install specific Go version
 ```bash
 # Download and install specific version
-wget https://go.dev/dl/go1.22.5.linux-amd64.tar.gz
+wget https://go.dev/dl/go1.25.0.linux-amd64.tar.gz
 sudo rm -rf /usr/local/go
-sudo tar -C /usr/local -xzf go1.22.5.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.25.0.linux-amd64.tar.gz
 echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.profile
 source ~/.profile
 go version
@@ -40,51 +39,25 @@ go version
 
 ---
 
-## 3. Install MySQL 8.0+
+## 3. Set Up PostgreSQL (Neon)
 
+The backend uses a hosted PostgreSQL database on [Neon](https://neon.tech) — no local database install is required.
+
+1. Create a free account at https://neon.tech
+2. Create a project (region closest to you)
+3. Copy the pooled connection string (starts with `postgresql://...-pooler...` and includes `?sslmode=require`)
+4. Put it in `server/.env` as `SECURECHAT_DATABASE_URL`
+
+### Optional: local PostgreSQL (offline development)
 ```bash
-# Install MySQL server
-sudo apt install -y mysql-server
-
-# Secure installation
-sudo mysql_secure_installation
-# Follow prompts:
-# - Validate password plugin: No (or Yes with MEDIUM)
-# - Root password: Set strong password
-# - Remove anonymous users: Yes
-# - Disallow root login remotely: Yes
-# - Remove test database: Yes
-# - Reload privilege tables: Yes
+docker run -d --name securechat-postgres -p 5432:5432 \
+  -e POSTGRES_PASSWORD=securechat -e POSTGRES_DB=securechat postgres:16
 ```
-
-### Create Database and User
-```bash
-sudo mysql -u root -p
-```
-
-```sql
-CREATE DATABASE securechat CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'securechat'@'%' IDENTIFIED BY 'your_strong_password';
-GRANT ALL PRIVILEGES ON securechat.* TO 'securechat'@'%';
-FLUSH PRIVILEGES;
-EXIT;
-```
-
-### Configure MySQL for Remote Access (if needed)
-```bash
-# Edit MySQL config
-sudo nano /etc/mysql/mysql.conf.d/mysqld.cnf
-
-# Find bind-address and change to:
-bind-address = 0.0.0.0
-
-# Restart MySQL
-sudo systemctl restart mysql
-```
+Then set `SECURECHAT_DATABASE_URL=postgres://postgres:securechat@localhost:5432/securechat?sslmode=disable` in `server/.env`
+(or run `docker compose up postgres` from the repo root).
 
 ### Firewall (UFW)
 ```bash
-sudo ufw allow 3306/tcp comment "MySQL"
 sudo ufw allow 8080/tcp comment "SecureChat Backend"
 sudo ufw enable
 ```
@@ -150,12 +123,13 @@ cd securechat
 # Server configuration
 cd server
 cp .env.example .env
-# Edit .env with your values
+# Edit .env: set SECURECHAT_DATABASE_URL to your Neon connection string
 nano .env
 # or use your preferred editor
 
 # Run migrations
-goose -dir migrations mysql "securechat:your_password@tcp(localhost:3306)/securechat" up
+export $(grep '^SECURECHAT_DATABASE_URL=' .env)
+goose -dir migrations postgres "$SECURECHAT_DATABASE_URL" up
 
 # Generate SQL code
 sqlc generate
@@ -163,6 +137,9 @@ sqlc generate
 # Start server
 go run cmd/server/main.go
 ```
+
+The server also runs pending migrations automatically on startup, so the manual
+`goose up` step is only needed when you want to migrate without starting the API.
 
 ---
 
@@ -173,8 +150,8 @@ go run cmd/server/main.go
 sudo tee /etc/systemd/system/securechat.service > /dev/null <<'EOF'
 [Unit]
 Description=SecureChat Backend Server
-After=network.target mysql.service
-Requires=mysql.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
@@ -283,35 +260,29 @@ curl -X POST http://localhost:8080/api/v1/auth/send-otp \
 
 ### Test Database
 ```bash
-mysql -u securechat -p securechat -e "SHOW TABLES;"
+cd server
+export $(grep '^SECURECHAT_DATABASE_URL=' .env)
+goose -dir migrations postgres "$SECURECHAT_DATABASE_URL" status
 ```
 
 ---
 
 ## 11. Common Issues
 
-### MySQL Connection Refused
-```bash
-# Check MySQL status
-sudo systemctl status mysql
-
-# Start if stopped
-sudo systemctl start mysql
-
-# Check port
-sudo netstat -tlnp | grep 3306
-
-# Check error log
-sudo tail -f /var/log/mysql/error.log
-```
+### Neon Connection Fails
+- Verify `SECURECHAT_DATABASE_URL` includes `?sslmode=require`
+- Check the connection string was copied in full (Neon truncates in the UI — use the copy button)
+- Free-tier compute autosuspends after inactivity: the first request may take a few seconds
 
 ### Goose Migration Fails
 ```bash
-# Verify database exists
-mysql -u securechat -p -e "USE securechat; SHOW TABLES;"
+# Check migration status / DSN
+export $(grep '^SECURECHAT_DATABASE_URL=' .env)
+goose -dir migrations postgres "$SECURECHAT_DATABASE_URL" status
 
-# Check DSN format
-goose -dir migrations mysql "securechat:password@tcp(localhost:3306)/securechat" status
+# If tables from another project exist in the public schema, drop them first
+# (Neon SQL Editor or psql):
+#   DROP SCHEMA public CASCADE; CREATE SCHEMA public;
 ```
 
 ### Android Build Fails
@@ -345,12 +316,6 @@ echo 'export PATH=$PATH:$(go env GOPATH)/bin' >> ~/.bashrc
 ## 12. Useful Commands
 
 ```bash
-# MySQL service management
-sudo systemctl start mysql
-sudo systemctl stop mysql
-sudo systemctl restart mysql
-sudo systemctl status mysql
-
 # SecureChat service management
 sudo systemctl start securechat
 sudo systemctl stop securechat
@@ -361,20 +326,24 @@ sudo systemctl status securechat
 sudo journalctl -u securechat -f
 sudo journalctl -u securechat --since "1 hour ago"
 
-# MySQL logs
-sudo tail -f /var/log/mysql/error.log
+# Migration status
+cd server
+export $(grep '^SECURECHAT_DATABASE_URL=' .env)
+goose -dir migrations postgres "$SECURECHAT_DATABASE_URL" status
 
-# Database backup
-mysqldump -u securechat -p securechat > backup_$(date +%Y%m%d_%H%M%S).sql
+# Database backup (Neon also has built-in point-in-time restore)
+pg_dump "$SECURECHAT_DATABASE_URL" > backup_$(date +%Y%m%d_%H%M%S).sql
 
 # Database restore
-mysql -u securechat -p securechat < backup_20240115_103000.sql
+psql "$SECURECHAT_DATABASE_URL" < backup_20240115_103000.sql
 
-# Reset database (DANGEROUS)
-mysql -u root -p -e "DROP DATABASE securechat; CREATE DATABASE securechat CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+# Reset database (DANGEROUS - deletes all data)
+# Run in the Neon SQL Editor:
+#   DROP SCHEMA public CASCADE; CREATE SCHEMA public;
+# then restart the server (migrations re-run automatically)
 
 # Check open ports
-sudo ss -tlnp | grep -E '3306|8080|11434'
+sudo ss -tlnp | grep -E '5432|8080|11434'
 
 # Monitor system resources
 htop

@@ -176,7 +176,7 @@ fun AboutScreen(
         
         // Built with love
         Text(
-            text = "Built with ❤️ using Kotlin, Jetpack Compose, Go, and MySQL",
+            text = "Built with ❤️ using Kotlin, Jetpack Compose, Go, and PostgreSQL",
             fontSize = 12.sp,
             color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
             textAlign = TextAlign.Center,

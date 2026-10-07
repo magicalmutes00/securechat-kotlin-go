@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
 	"github.com/pressly/goose/v3"
 	"github.com/securechat/server/config"
 	"github.com/securechat/server/pkg/logger"
 	"go.uber.org/zap"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 var DB *sql.DB
@@ -18,15 +19,16 @@ var DB *sql.DB
 func New(cfg *config.Config) (*sql.DB, error) {
 	dsn := cfg.GetDSN()
 
-	db, err := sql.Open("mysql", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// Connection pool settings
-	db.SetMaxOpenConns(cfg.MySQL.MaxOpenConns)
-	db.SetMaxIdleConns(cfg.MySQL.MaxIdleConns)
-	db.SetConnMaxLifetime(time.Duration(cfg.MySQL.ConnMaxLifetime) * time.Second)
+	// Connection pool settings. Keep these well below the Neon pooler's
+	// connection limit; the pooled (-pooler) endpoint is transaction-mode.
+	db.SetMaxOpenConns(cfg.Database.MaxOpenConns)
+	db.SetMaxIdleConns(cfg.Database.MaxIdleConns)
+	db.SetConnMaxLifetime(time.Duration(cfg.Database.ConnMaxLifetime) * time.Second)
 
 	// Test connection
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -38,8 +40,8 @@ func New(cfg *config.Config) (*sql.DB, error) {
 
 	DB = db
 	logger.Log.Info("Database connected",
-		zap.String("host", cfg.MySQL.Host),
-		zap.String("database", cfg.MySQL.Database),
+		zap.String("host", cfg.Database.Host),
+		zap.String("database", cfg.Database.Name),
 	)
 
 	return db, nil
@@ -48,7 +50,7 @@ func New(cfg *config.Config) (*sql.DB, error) {
 func Migrate(db *sql.DB) error {
 	logger.Log.Info("Running database migrations...")
 
-	if err := goose.SetDialect("mysql"); err != nil {
+	if err := goose.SetDialect("postgres"); err != nil {
 		return fmt.Errorf("failed to set dialect: %w", err)
 	}
 

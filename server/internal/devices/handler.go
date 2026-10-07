@@ -35,7 +35,7 @@ type Device struct {
 func (r *Repository) GetByUserID(ctx context.Context, userID int64) ([]*Device, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, user_id, device_name, device_identifier, platform, created_at, last_seen
-		FROM devices WHERE user_id = ? ORDER BY last_seen DESC
+		FROM devices WHERE user_id = $1 ORDER BY last_seen DESC NULLS LAST
 	`, userID)
 	if err != nil {
 		return nil, err
@@ -56,7 +56,7 @@ func (r *Repository) GetByUserID(ctx context.Context, userID int64) ([]*Device, 
 func (r *Repository) Revoke(ctx context.Context, deviceID, userID int64) error {
 	// Verify ownership
 	var ownerID int64
-	err := r.db.QueryRowContext(ctx, `SELECT user_id FROM devices WHERE id = ?`, deviceID).Scan(&ownerID)
+	err := r.db.QueryRowContext(ctx, `SELECT user_id FROM devices WHERE id = $1`, deviceID).Scan(&ownerID)
 	if err != nil {
 		return err
 	}
@@ -64,7 +64,7 @@ func (r *Repository) Revoke(ctx context.Context, deviceID, userID int64) error {
 		return apperrors.ErrForbidden
 	}
 
-	_, err = r.db.ExecContext(ctx, `DELETE FROM devices WHERE id = ?`, deviceID)
+	_, err = r.db.ExecContext(ctx, `DELETE FROM devices WHERE id = $1`, deviceID)
 	return err
 }
 

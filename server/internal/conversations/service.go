@@ -31,7 +31,7 @@ func (s *Service) GetConversation(ctx context.Context, conversationID, userID in
 	// Verify participant
 	var isParticipant bool
 	err := s.repo.db.QueryRowContext(ctx, `
-		SELECT EXISTS(SELECT 1 FROM conversation_participants WHERE conversation_id = ? AND user_id = ? AND left_at IS NULL)
+		SELECT EXISTS(SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NULL)
 	`, conversationID, userID).Scan(&isParticipant)
 	if err != nil || !isParticipant {
 		return nil, apperrors.ErrNotParticipant
@@ -43,7 +43,7 @@ func (s *Service) GetConversation(ctx context.Context, conversationID, userID in
 func (s *Service) CreateDirectConversation(ctx context.Context, userID int64, otherUserPhone string) (*ConversationWithParticipants, error) {
 	// Find other user by phone
 	var otherUserID int64
-	err := s.repo.db.QueryRowContext(ctx, `SELECT id FROM users WHERE phone_number = ?`, otherUserPhone).Scan(&otherUserID)
+	err := s.repo.db.QueryRowContext(ctx, `SELECT id FROM users WHERE phone_number = $1`, otherUserPhone).Scan(&otherUserID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, apperrors.ErrUserNotFound

@@ -56,7 +56,7 @@ func (r *Repository) FindUserByPhone(ctx context.Context, phoneNumber string) (*
 	var user User
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, phone_number, email, username, display_name, profile_image_id, last_seen, is_online, created_at, updated_at
-		FROM users WHERE phone_number = ?
+		FROM users WHERE phone_number = $1
 	`, phoneNumber).Scan(
 		&user.ID, &user.PhoneNumber, &user.Email, &user.Username, &user.DisplayName,
 		&user.ProfileImageID, &user.LastSeen, &user.IsOnline, &user.CreatedAt, &user.UpdatedAt,
@@ -74,7 +74,7 @@ func (r *Repository) FindUserByUsername(ctx context.Context, username string) (*
 	var user User
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, phone_number, email, username, display_name, profile_image_id, last_seen, is_online, created_at, updated_at
-		FROM users WHERE username = ?
+		FROM users WHERE username = $1
 	`, username).Scan(
 		&user.ID, &user.PhoneNumber, &user.Email, &user.Username, &user.DisplayName,
 		&user.ProfileImageID, &user.LastSeen, &user.IsOnline, &user.CreatedAt, &user.UpdatedAt,
@@ -92,7 +92,7 @@ func (r *Repository) FindUserByGoogleSub(ctx context.Context, googleSub string) 
 	var user User
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, phone_number, email, username, display_name, profile_image_id, last_seen, is_online, created_at, updated_at
-		FROM users WHERE google_sub = ?
+		FROM users WHERE google_sub = $1
 	`, googleSub).Scan(
 		&user.ID, &user.PhoneNumber, &user.Email, &user.Username, &user.DisplayName,
 		&user.ProfileImageID, &user.LastSeen, &user.IsOnline, &user.CreatedAt, &user.UpdatedAt,
@@ -104,28 +104,31 @@ func (r *Repository) FindUserByGoogleSub(ctx context.Context, googleSub string) 
 }
 
 func (r *Repository) CreateUser(ctx context.Context, phoneNumber, displayName string) (*User, error) {
-	result, err := r.db.ExecContext(ctx, `
+	// PostgreSQL has no LastInsertId; the new row comes back via RETURNING.
+	var id int64
+	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO users (phone_number, display_name, created_at, updated_at)
-		VALUES (?, ?, NOW(), NOW())
-	`, phoneNumber, displayName)
+		VALUES ($1, $2, NOW(), NOW())
+		RETURNING id
+	`, phoneNumber, displayName).Scan(&id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
-	_, _ = result.LastInsertId()
-	return r.FindUserByPhone(ctx, phoneNumber)
+	return r.GetUserByID(ctx, id)
 }
 
 func (r *Repository) CreateGoogleUser(ctx context.Context, googleSub, email, displayName string) (*User, error) {
-	result, err := r.db.ExecContext(ctx, `
+	var id int64
+	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO users (email, google_sub, display_name, created_at, updated_at)
-		VALUES (?, ?, ?, NOW(), NOW())
-	`, email, googleSub, displayName)
+		VALUES ($1, $2, $3, NOW(), NOW())
+		RETURNING id
+	`, email, googleSub, displayName).Scan(&id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create google user: %w", err)
 	}
 
-	id, _ := result.LastInsertId()
 	return r.GetUserByID(ctx, id)
 }
 
@@ -135,7 +138,7 @@ func (r *Repository) CreateDevice(ctx context.Context, userID int64, deviceName,
 	if err == nil {
 		// Update existing device
 		_, err = r.db.ExecContext(ctx, `
-			UPDATE devices SET device_name = ?, last_seen = NOW() WHERE id = ?
+			UPDATE devices SET device_name = $1, last_seen = NOW() WHERE id = $2
 		`, deviceName, existing.ID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to update device: %w", err)
@@ -143,15 +146,16 @@ func (r *Repository) CreateDevice(ctx context.Context, userID int64, deviceName,
 		return r.FindDeviceByID(ctx, existing.ID)
 	}
 
-	result, err := r.db.ExecContext(ctx, `
+	var id int64
+	err = r.db.QueryRowContext(ctx, `
 		INSERT INTO devices (user_id, device_name, device_identifier, platform, created_at, last_seen)
-		VALUES (?, ?, ?, ?, NOW(), NOW())
-	`, userID, deviceName, deviceIdentifier, platform)
+		VALUES ($1, $2, $3, $4, NOW(), NOW())
+		RETURNING id
+	`, userID, deviceName, deviceIdentifier, platform).Scan(&id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create device: %w", err)
 	}
 
-	id, _ := result.LastInsertId()
 	return r.FindDeviceByID(ctx, id)
 }
 
@@ -159,7 +163,7 @@ func (r *Repository) FindDeviceByUserAndIdentifier(ctx context.Context, userID i
 	var device Device
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, user_id, device_name, device_identifier, platform, created_at, last_seen
-		FROM devices WHERE user_id = ? AND device_identifier = ?
+		FROM devices WHERE user_id = $1 AND device_identifier = $2
 	`, userID, identifier).Scan(
 		&device.ID, &device.UserID, &device.DeviceName, &device.DeviceIdentifier,
 		&device.Platform, &device.CreatedAt, &device.LastSeen,
@@ -174,7 +178,7 @@ func (r *Repository) FindDeviceByID(ctx context.Context, id int64) (*Device, err
 	var device Device
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, user_id, device_name, device_identifier, platform, created_at, last_seen
-		FROM devices WHERE id = ?
+		FROM devices WHERE id = $1
 	`, id).Scan(
 		&device.ID, &device.UserID, &device.DeviceName, &device.DeviceIdentifier,
 		&device.Platform, &device.CreatedAt, &device.LastSeen,
@@ -191,15 +195,16 @@ func (r *Repository) CreateSession(ctx context.Context, userID, deviceID int64, 
 		return nil, fmt.Errorf("failed to hash refresh token: %w", err)
 	}
 
-	result, err := r.db.ExecContext(ctx, `
+	var id int64
+	err = r.db.QueryRowContext(ctx, `
 		INSERT INTO sessions (user_id, device_id, refresh_token_hash, expires_at, created_at)
-		VALUES (?, ?, ?, ?, NOW())
-	`, userID, deviceID, refreshTokenHash, expiresAt)
+		VALUES ($1, $2, $3, $4, NOW())
+		RETURNING id
+	`, userID, deviceID, refreshTokenHash, expiresAt).Scan(&id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
 
-	id, _ := result.LastInsertId()
 	return r.FindSessionByID(ctx, id)
 }
 
@@ -207,7 +212,7 @@ func (r *Repository) FindSessionByID(ctx context.Context, id int64) (*Session, e
 	var session Session
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, user_id, device_id, refresh_token_hash, expires_at, revoked_at, created_at
-		FROM sessions WHERE id = ?
+		FROM sessions WHERE id = $1
 	`, id).Scan(
 		&session.ID, &session.UserID, &session.DeviceID, &session.RefreshTokenHash,
 		&session.ExpiresAt, &session.RevokedAt, &session.CreatedAt,
@@ -228,7 +233,7 @@ func (r *Repository) UpdateSessionRefreshHash(ctx context.Context, sessionID int
 	}
 
 	_, err = r.db.ExecContext(ctx, `
-		UPDATE sessions SET refresh_token_hash = ?, expires_at = ? WHERE id = ?
+		UPDATE sessions SET refresh_token_hash = $1, expires_at = $2 WHERE id = $3
 	`, refreshTokenHash, expiresAt, sessionID)
 	if err != nil {
 		return fmt.Errorf("failed to update session refresh hash: %w", err)
@@ -244,7 +249,7 @@ func (r *Repository) IsSessionActive(ctx context.Context, userID, sessionID int6
 	err := r.db.QueryRowContext(ctx, `
 		SELECT EXISTS(
 			SELECT 1 FROM sessions
-			WHERE id = ? AND user_id = ? AND revoked_at IS NULL AND expires_at > NOW()
+			WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL AND expires_at > NOW()
 		)
 	`, sessionID, userID).Scan(&isActive)
 	return isActive, err
@@ -252,21 +257,21 @@ func (r *Repository) IsSessionActive(ctx context.Context, userID, sessionID int6
 
 func (r *Repository) RevokeSession(ctx context.Context, sessionID int64) error {
 	_, err := r.db.ExecContext(ctx, `
-		UPDATE sessions SET revoked_at = NOW() WHERE id = ?
+		UPDATE sessions SET revoked_at = NOW() WHERE id = $1
 	`, sessionID)
 	return err
 }
 
 func (r *Repository) RevokeAllUserSessions(ctx context.Context, userID int64) error {
 	_, err := r.db.ExecContext(ctx, `
-		UPDATE sessions SET revoked_at = NOW() WHERE user_id = ? AND revoked_at IS NULL
+		UPDATE sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL
 	`, userID)
 	return err
 }
 
 func (r *Repository) RevokeAllOtherSessions(ctx context.Context, userID, currentSessionID int64) error {
 	_, err := r.db.ExecContext(ctx, `
-		UPDATE sessions SET revoked_at = NOW() WHERE user_id = ? AND id != ? AND revoked_at IS NULL
+		UPDATE sessions SET revoked_at = NOW() WHERE user_id = $1 AND id != $2 AND revoked_at IS NULL
 	`, userID, currentSessionID)
 	return err
 }
@@ -274,7 +279,7 @@ func (r *Repository) RevokeAllOtherSessions(ctx context.Context, userID, current
 func (r *Repository) GetUserDevices(ctx context.Context, userID int64) ([]*Device, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, user_id, device_name, device_identifier, platform, created_at, last_seen
-		FROM devices WHERE user_id = ? ORDER BY last_seen DESC
+		FROM devices WHERE user_id = $1 ORDER BY last_seen DESC NULLS LAST
 	`, userID)
 	if err != nil {
 		return nil, err
@@ -301,7 +306,7 @@ func (r *Repository) FindSessionByRefreshToken(ctx context.Context, sessionID in
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, user_id, device_id, refresh_token_hash, expires_at, revoked_at, created_at
 		FROM sessions
-		WHERE id = ?
+		WHERE id = $1
 	`, sessionID).Scan(
 		&session.ID, &session.UserID, &session.DeviceID, &session.RefreshTokenHash,
 		&session.ExpiresAt, &session.RevokedAt, &session.CreatedAt,
@@ -314,7 +319,7 @@ func (r *Repository) FindSessionByRefreshToken(ctx context.Context, sessionID in
 
 func (r *Repository) UpdateUserOnlineStatus(ctx context.Context, userID int64, isOnline bool) error {
 	_, err := r.db.ExecContext(ctx, `
-		UPDATE users SET is_online = ?, last_seen = NOW() WHERE id = ?
+		UPDATE users SET is_online = $1, last_seen = NOW() WHERE id = $2
 	`, isOnline, userID)
 	return err
 }
@@ -323,7 +328,7 @@ func (r *Repository) GetUserByID(ctx context.Context, userID int64) (*User, erro
 	var user User
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, phone_number, email, username, display_name, profile_image_id, last_seen, is_online, created_at, updated_at
-		FROM users WHERE id = ?
+		FROM users WHERE id = $1
 	`, userID).Scan(
 		&user.ID, &user.PhoneNumber, &user.Email, &user.Username, &user.DisplayName,
 		&user.ProfileImageID, &user.LastSeen, &user.IsOnline, &user.CreatedAt, &user.UpdatedAt,
