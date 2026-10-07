@@ -190,13 +190,10 @@ func (r *Repository) FindDeviceByID(ctx context.Context, id int64) (*Device, err
 }
 
 func (r *Repository) CreateSession(ctx context.Context, userID, deviceID int64, refreshToken string, expiresAt time.Time) (*Session, error) {
-	refreshTokenHash, err := crypto.HashPassword(refreshToken)
-	if err != nil {
-		return nil, fmt.Errorf("failed to hash refresh token: %w", err)
-	}
+	refreshTokenHash := crypto.HashToken(refreshToken)
 
 	var id int64
-	err = r.db.QueryRowContext(ctx, `
+	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO sessions (user_id, device_id, refresh_token_hash, expires_at, created_at)
 		VALUES ($1, $2, $3, $4, NOW())
 		RETURNING id
@@ -227,12 +224,9 @@ func (r *Repository) FindSessionByID(ctx context.Context, id int64) (*Session, e
 // The session row (and therefore the session_id claim inside the JWTs) stays
 // stable across rotations, so access tokens remain bound to the same session.
 func (r *Repository) UpdateSessionRefreshHash(ctx context.Context, sessionID int64, refreshToken string, expiresAt time.Time) error {
-	refreshTokenHash, err := crypto.HashPassword(refreshToken)
-	if err != nil {
-		return fmt.Errorf("failed to hash refresh token: %w", err)
-	}
+	refreshTokenHash := crypto.HashToken(refreshToken)
 
-	_, err = r.db.ExecContext(ctx, `
+	_, err := r.db.ExecContext(ctx, `
 		UPDATE sessions SET refresh_token_hash = $1, expires_at = $2 WHERE id = $3
 	`, refreshTokenHash, expiresAt, sessionID)
 	if err != nil {

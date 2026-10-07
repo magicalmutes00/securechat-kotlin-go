@@ -26,6 +26,36 @@ func TestHashPassword(t *testing.T) {
 	}
 }
 
+func TestHashToken(t *testing.T) {
+	// A realistic RS256 refresh JWT — several hundred bytes. bcrypt would
+	// reject this ("password length exceeds 72 bytes"), which is exactly the
+	// bug this digest replaces.
+	token := "eyJhbGciOiJSUzI1NiIsImtpZCI6InJzYS0xIiwidHlwIjoiSldUIn0." +
+		"eyJzdWIiOjEsImRldmljZV9pZCI6Miwic2Vzc2lvbl9pZCI6MywiZXhwIjoxNzkxNDAzNjU3fQ." +
+		"MEUCIQDx8Yc3nYi8vK7p2mQ9wJ5tH0sV6lN4gB1cE7aZ3oFdAiEA9zK2mP4qR6sT8uV0wX1yZ2aB3cD4eF5gH6iJ7kL8oM9"
+
+	if len(token) <= 72 {
+		t.Fatalf("test token is only %d bytes; needs to exceed bcrypt's 72-byte cap", len(token))
+	}
+
+	hash := HashToken(token)
+	if len(hash) != 64 {
+		t.Fatalf("HashToken returned %d chars, expected 64 hex chars", len(hash))
+	}
+	if hash != HashToken(token) {
+		t.Fatal("HashToken not deterministic")
+	}
+	if hash == HashToken(token+"x") {
+		t.Fatal("HashToken collides for different tokens")
+	}
+	if !CheckToken(hash, token) {
+		t.Fatal("CheckToken failed for correct token")
+	}
+	if CheckToken(hash, token+"x") {
+		t.Fatal("CheckToken succeeded for wrong token")
+	}
+}
+
 func TestGenerateOTP(t *testing.T) {
 	otp, err := GenerateOTP(6)
 	if err != nil {

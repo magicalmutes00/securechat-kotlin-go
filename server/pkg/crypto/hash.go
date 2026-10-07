@@ -33,6 +33,21 @@ func CheckPassword(hash, password string) bool {
 	return err == nil
 }
 
+// HashToken stores a high-entropy credential (a refresh JWT) as its SHA-256
+// hex digest. bcrypt is the wrong tool twice over here: its input is capped
+// at 72 bytes (RS256 JWTs run several hundred), and its deliberate slowness
+// buys nothing against cryptographically random tokens — a preimage-resistant
+// digest is the standard way to store them.
+func HashToken(token string) string {
+	return SHA256String(token)
+}
+
+// CheckToken reports whether token matches a digest produced by HashToken,
+// compared in constant time.
+func CheckToken(storedHash, token string) bool {
+	return ConstantTimeCompare(storedHash, HashToken(token))
+}
+
 // GenerateOTP generates a cryptographically secure OTP
 func GenerateOTP(length int) (string, error) {
 	if length <= 0 {

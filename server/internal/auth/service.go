@@ -141,9 +141,8 @@ func (s *Service) RefreshToken(ctx context.Context, refreshToken string) (access
 		return "", "", apperrors.ErrTokenInvalid
 	}
 
-	// Find the session named in the token and verify the presented token's
-	// hash against the stored one. bcrypt salts each hash, so equality of a
-	// re-computed hash is not a lookup strategy — compare explicitly.
+	// Find the session named in the token; the digest comparison happens
+	// against the stored hash below.
 	session, err := s.repo.FindSessionByRefreshToken(ctx, claims.SessionID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -156,7 +155,11 @@ func (s *Service) RefreshToken(ctx context.Context, refreshToken string) (access
 		return "", "", apperrors.ErrTokenRevoked
 	}
 
-	if !crypto.CheckPassword(session.RefreshTokenHash, refreshToken) {
+	// Refresh tokens are high-entropy signed JWTs, stored as SHA-256 digests
+	// (see crypto.HashToken), so a re-computed digest cannot be inverted or
+	// rainbow-tabled; the constant-time compare keeps the check itself from
+	// leaking timing information.
+	if !crypto.CheckToken(session.RefreshTokenHash, refreshToken) {
 		// The token is cryptographically valid but no longer the session's
 		// current refresh token — this is a replayed rotated-out token, a
 		// classic sign of theft. Revoke everything for this user.
