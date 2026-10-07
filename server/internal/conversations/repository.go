@@ -41,8 +41,11 @@ type Participant struct {
 }
 
 type UserPreview struct {
-	ID             int64
-	PhoneNumber    string
+	ID int64
+	// Phone is NULL for Google-signed-in users, so the scan target must be
+	// NULL-safe — a plain string made every conversation containing such a
+	// user fail with a Scan error.
+	PhoneNumber    sql.NullString
 	Username       sql.NullString
 	DisplayName    string
 	ProfileImageID sql.NullInt64
