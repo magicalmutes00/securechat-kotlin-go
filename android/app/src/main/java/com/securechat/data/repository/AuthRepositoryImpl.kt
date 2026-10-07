@@ -135,11 +135,14 @@ class AuthRepositoryImpl @Inject constructor(
 
     override suspend fun logout(): Result<Unit> {
         return withContext(Dispatchers.IO) {
-            apiService.logout().flatMap {
-                tokenStorage.clear().flatMap {
-                    _currentUser.value = null
-                    Result.success(Unit)
-                }
+            // Best-effort server-side revocation: local state is cleared even
+            // when the call fails (expired access token, offline), because the
+            // user asked to log out on THIS device regardless. Otherwise stale
+            // tokens survive and every later launch replays refresh/logout.
+            apiService.logout()
+            tokenStorage.clear().flatMap {
+                _currentUser.value = null
+                Result.success(Unit)
             }
         }
     }

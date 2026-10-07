@@ -39,7 +39,11 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    fun createNewConversation(participantPhone: String, onSuccess: (Conversation) -> Unit) {
+    fun createNewConversation(
+        participantPhone: String,
+        onSuccess: (Conversation) -> Unit,
+        onFailure: () -> Unit = {}
+    ) {
         viewModelScope.launch {
             val result = createConversationUseCase(participantPhone)
             result.onSuccess { conversation ->
@@ -47,6 +51,9 @@ class HomeViewModel @Inject constructor(
                 onSuccess(conversation)
             }.onFailure { e ->
                 errorMessage.value = "Failed to create conversation"
+                // The caller shows a blocking spinner while this runs — it has
+                // to be dismissed or a failed creation strands the UI.
+                onFailure()
             }
         }
     }

@@ -132,6 +132,9 @@ dependencies {
     // Ktor
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.android)
+    // OkHttp engine: unlike the HttpURLConnection-based Android engine it
+    // implements WebSocketCapability, which the realtime client needs.
+    implementation(libs.ktor.client.okhttp)
     implementation(libs.ktor.client.content.negotiation)
     implementation(libs.ktor.serialization.kotlinx)
     implementation(libs.ktor.client.logging)

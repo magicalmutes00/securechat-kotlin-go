@@ -33,8 +33,8 @@ class ConversationRepositoryImpl @Inject constructor(
     override suspend fun getConversations(): Result<List<Conversation>> {
         return withContext(Dispatchers.IO) {
             apiService.getConversations(cursor = null, limit = 50)
-                .map { response ->
-                    response.items.map { dto ->
+                .map { conversations ->
+                    conversations.map { dto ->
                         val conversation = mapToConversation(dto)
                         saveConversation(conversation)
                         conversation
@@ -101,23 +101,58 @@ class ConversationRepositoryImpl @Inject constructor(
     }
 
     private fun mapToConversation(dto: ConversationDto): Conversation {
+        // The server sends participants flat (user fields inlined, no join
+        // metadata), so the nested domain shape is assembled here: the
+        // conversation id comes from the parent, and join timestamps simply
+        // aren't on the wire yet.
         val participants = dto.participants.map { p ->
             ConversationParticipant(
-                conversationId = p.conversation_id,
+                conversationId = dto.id,
                 userId = p.user_id,
-                joinedAt = p.joined_at,
-                leftAt = p.left_at,
-                user = p.user?.let { mapToUser(it) }
+                joinedAt = 0,
+                leftAt = null,
+                user = mapToUser(
+                    com.securechat.data.remote.dto.UserDto(
+                        id = p.user_id,
+                        username = p.username,
+                        display_name = p.display_name,
+                        profile_image_id = p.profile_image_id,
+                        is_online = p.is_online
+                    )
+                )
             )
         }
         return Conversation(
             id = dto.id,
             type = ConversationType.valueOf(dto.type.uppercase()),
             participants = participants,
-            lastMessage = dto.last_message?.let { mapToMessage(it) },
+            lastMessage = dto.last_message?.let { mapToPreview(it, dto.id) },
             unreadCount = dto.unread_count,
             createdAt = dto.created_at,
             updatedAt = dto.updated_at
+        )
+    }
+
+    private fun mapToPreview(
+        dto: com.securechat.data.remote.dto.MessagePreviewDto,
+        conversationId: Long
+    ): com.securechat.domain.model.Message {
+        // The preview projection carries no conversation_id/updated_at — the
+        // parent conversation id and the creation time stand in for them.
+        return com.securechat.domain.model.Message(
+            id = dto.id,
+            conversationId = conversationId,
+            senderId = dto.sender_id,
+            type = com.securechat.domain.model.MessageType.valueOf(dto.type.uppercase()),
+            text = dto.text,
+            media = null,
+            replyTo = null,
+            status = com.securechat.domain.model.MessageStatus.valueOf(dto.status.uppercase()),
+            createdAt = dto.created_at,
+            updatedAt = dto.created_at,
+            deliveredAt = null,
+            readAt = null,
+            deletedAt = null
         )
     }
 

@@ -87,12 +87,18 @@ object DataModule {
     fun provideApiService(
         httpClient: HttpClient,
         @ApplicationContext context: Context,
-        tokenStorage: TokenStorage
+        tokenStorage: TokenStorage,
+        // dagger.Lazy breaks the ApiService ↔ AuthRepository dependency cycle
+        // (the repository is built on top of this service).
+        authRepository: dagger.Lazy<AuthRepository>
     ): ApiService {
         val baseUrl = context.getString(R.string.server_base_url)
-        return ApiServiceImpl(httpClient, baseUrl) {
-            runBlocking { tokenStorage.getAccessToken().getOrNull() }
-        }
+        return ApiServiceImpl(
+            client = httpClient,
+            baseUrl = baseUrl,
+            tokenProvider = { runBlocking { tokenStorage.getAccessToken().getOrNull() } },
+            refreshAuth = { authRepository.get().refreshToken().isSuccess }
+        )
     }
 
     // WebSocket

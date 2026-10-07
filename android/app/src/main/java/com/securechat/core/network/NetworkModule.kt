@@ -2,7 +2,7 @@ package com.securechat.core.network
 
 import android.util.Log
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.android.Android
+import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
@@ -25,7 +25,10 @@ class NetworkModule {
     }
 
     private fun createClient(): HttpClient {
-        val client = HttpClient(Android) {
+        // OkHttp rather than the default Android engine: the realtime client
+        // needs WebSocket support, which the Android (HttpURLConnection)
+        // engine does not implement.
+        val client = HttpClient(OkHttp) {
             install(ContentNegotiation) {
                 json(Json { ignoreUnknownKeys = true })
             }

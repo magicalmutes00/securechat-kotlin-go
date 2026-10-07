@@ -75,18 +75,22 @@ data class RefreshTokenResponse(
 )
 
 // User DTOs
+// Nullable fields carry defaults because the backend uses omitempty for them
+// (a Google user, for instance, has no username/profile image yet) and the
+// auth endpoints omit last_seen/is_online/created_at/updated_at entirely —
+// kotlinx treats a nullable field without a default as a required key.
 @Serializable
 data class UserDto(
     val id: Long,
-    val phone_number: String?,
+    val phone_number: String? = null,
     val email: String? = null,
-    val username: String?,
-    val display_name: String,
-    val profile_image_id: Long?,
-    val last_seen: Long?,
-    val is_online: Boolean,
-    val created_at: Long,
-    val updated_at: Long
+    val username: String? = null,
+    val display_name: String = "",
+    val profile_image_id: Long? = null,
+    val last_seen: Long? = null,
+    val is_online: Boolean = false,
+    val created_at: Long = 0,
+    val updated_at: Long = 0
 )
 
 @Serializable
@@ -110,19 +114,33 @@ data class ConversationDto(
     val id: Long,
     val type: String,
     val participants: List<ConversationParticipantDto>,
-    val last_message: MessageDto?,
+    val last_message: MessagePreviewDto? = null,
     val unread_count: Int,
     val created_at: Long,
     val updated_at: Long
 )
 
+// The server's participant payload is flat (user fields inlined, no join
+// metadata) — see ParticipantResponse in the Go conversations handler.
 @Serializable
 data class ConversationParticipantDto(
-    val conversation_id: Long,
     val user_id: Long,
-    val joined_at: Long,
-    val left_at: Long?,
-    val user: UserDto?
+    val display_name: String,
+    val username: String? = null,
+    val profile_image_id: Long? = null,
+    val is_online: Boolean = false
+)
+
+// Server-side MessagePreviewResponse: a trimmed projection of a message —
+// deliberately not a full MessageDto (no conversation_id/updated_at).
+@Serializable
+data class MessagePreviewDto(
+    val id: Long,
+    val sender_id: Long,
+    val type: String,
+    val text: String? = null,
+    val status: String,
+    val created_at: Long
 )
 
 @Serializable
@@ -131,27 +149,30 @@ data class CreateConversationRequest(
 )
 
 // Message DTOs
+// Nullable fields default to null because the backend uses omitempty for
+// them (and never sends deleted_at at all) — kotlinx treats a nullable field
+// without a default as a required key.
 @Serializable
 data class MessageDto(
     val id: Long,
     val conversation_id: Long,
     val sender_id: Long,
     val type: String,
-    val text: String?,
-    val media: MediaDto?,
-    val reply_to: MessageDto?,
+    val text: String? = null,
+    val media: MediaDto? = null,
+    val reply_to: MessageDto? = null,
     val status: String,
     val created_at: Long,
     val updated_at: Long,
-    val delivered_at: Long?,
-    val read_at: Long?,
-    val deleted_at: Long?
+    val delivered_at: Long? = null,
+    val read_at: Long? = null,
+    val deleted_at: Long? = null
 )
 
 @Serializable
 data class MessagePageDto(
     val messages: List<MessageDto>,
-    val next_cursor: Long?,
+    val next_cursor: Long? = null,
     val has_more: Boolean
 )
 

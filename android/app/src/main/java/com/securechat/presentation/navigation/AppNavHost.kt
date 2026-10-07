@@ -144,14 +144,18 @@ fun AppNavHost(
             val homeViewModel = hiltViewModel<HomeViewModel>()
             androidx.compose.runtime.LaunchedEffect(phone) {
                 if (phone.isNotBlank()) {
-                    homeViewModel.createNewConversation(phone) { conversation ->
-                        // Pop this placeholder route so back returns to the list.
-                        navController.navigate(
-                            "conversation/${conversation.id}?name=${android.net.Uri.encode(conversation.getDisplayName(0))}"
-                        ) {
-                            popUpTo("conversation/new?phone={phone}") { inclusive = true }
-                        }
-                    }
+                    homeViewModel.createNewConversation(
+                        phone,
+                        onSuccess = { conversation ->
+                            // Pop this placeholder route so back returns to the list.
+                            navController.navigate(
+                                "conversation/${conversation.id}?name=${android.net.Uri.encode(conversation.getDisplayName(0))}"
+                            ) {
+                                popUpTo("conversation/new?phone={phone}") { inclusive = true }
+                            }
+                        },
+                        onFailure = { navController.popBackStack() }
+                    )
                 } else {
                     navController.popBackStack()
                 }
