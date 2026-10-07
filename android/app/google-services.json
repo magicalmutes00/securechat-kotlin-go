@@ -14,6 +14,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "698582690674-aoeiv6uspflh3ojc8chho79nbvb634al.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.trisentricai.securechat",
+            "certificate_hash": "a6c6bfb56c16c1e35b5434d81d61ad8dd36493e3"
+          }
+        },
+        {
           "client_id": "698582690674-mhuokej95kb2c0e7u3aop2b6iporaci3.apps.googleusercontent.com",
           "client_type": 3
         }

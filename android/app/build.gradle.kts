@@ -63,6 +63,18 @@ android {
         }
     }
 
+    signingConfigs {
+        // Project-specific signing identity (outside the repo, at
+        // ~/.android/securechat.keystore). storePassword is a local debug
+        // convenience, not a production secret — do not reuse for Play.
+        create("securechat") {
+            storeFile = file("${System.getProperty("user.home")}/.android/securechat.keystore")
+            storePassword = "securechat"
+            keyAlias = "securechat"
+            keyPassword = "securechat"
+        }
+    }
+
     buildTypes {
         debug {
             isDebuggable = true
@@ -72,6 +84,7 @@ android {
             // com.trisentricai.securechat, and debug installs use the same id.
             versionNameSuffix = "-debug"
             matchingFallbacks += "release"
+            signingConfig = signingConfigs.getByName("securechat")
         }
         release {
             isDebuggable = false

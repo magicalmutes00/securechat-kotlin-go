@@ -102,6 +102,10 @@ fun AuthScreen(
                                 "Google sign-in not available. Check that the app's SHA-1 fingerprint is registered."
                             is androidx.credentials.exceptions.GetCredentialCancellationException ->
                                 "Google sign-in cancelled."
+                            // Play Services errors (e.g. "Developer console is not set up
+                            // correctly") carry the actual fix in their message — surface it.
+                            is androidx.credentials.exceptions.GetCredentialCustomException ->
+                                "Google sign-in failed: ${e.message ?: "credential provider error"}"
                             else -> "Google sign-in failed. Please try again."
                         }
                     }
