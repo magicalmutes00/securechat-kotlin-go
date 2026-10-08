@@ -41,7 +41,10 @@ type Client struct {
 	hub       *Hub
 	conn      *websocket.Conn
 	send      chan []byte
-	closeOnce sync.Once
+	closeOnce sync.Once // closes send
+	connOnce  sync.Once // closes conn exactly once
+	doneOnce  sync.Once // closes done exactly once
+	done      chan struct{}
 	mu        sync.Mutex // guards conn writes (write pump is the only writer)
 	userID    int64
 	deviceID  int64
@@ -160,10 +163,31 @@ func (c *Client) closeSend() {
 	})
 }
 
+// closeConn closes the underlying socket exactly once. fasthttp/websocket
+// panics when Conn.Close runs twice, and any subsequent read/write on a closed
+// connection dereferences a nil net.Conn, so every teardown path funnels here.
+func (c *Client) closeConn() {
+	c.connOnce.Do(func() {
+		_ = c.conn.Close()
+	})
+}
+
+// shutdown signals both pumps to stop and tears the socket down. It is safe to
+// call concurrently and repeatedly from any goroutine.
+func (c *Client) shutdown() {
+	c.doneOnce.Do(func() { close(c.done) })
+	c.closeConn()
+}
+
 func (c *Client) ReadPump() {
 	defer func() {
+		// A panic here (e.g. reading a connection another goroutine just tore
+		// down) must tear down this client only, never the whole process.
+		if r := recover(); r != nil {
+			logger.Log.Error("WebSocket read pump panic", zap.Any("panic", r))
+		}
 		c.hub.unregister <- c
-		c.conn.Close()
+		c.shutdown()
 	}()
 
 	c.conn.SetReadLimit(maxMessageSize)
@@ -190,35 +214,48 @@ func (c *Client) WritePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		c.conn.Close()
+		// A recovered panic (e.g. writing to a socket the read pump just closed)
+		// must not take the process down — the connection is already dead.
+		if r := recover(); r != nil {
+			logger.Log.Error("WebSocket write pump panic", zap.Any("panic", r))
+		}
+		// If the write pump is the first to exit, this unblocks the read pump.
+		c.shutdown()
 	}()
 
 	for {
 		select {
+		case <-c.done:
+			return
+
 		case message, ok := <-c.send:
-			c.mu.Lock()
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
-				// Hub closed our send channel: notify the client and exit.
-				_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
-				c.mu.Unlock()
+				// Hub closed the send channel; teardown is already handled.
 				return
 			}
-			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
-				c.mu.Unlock()
+			c.mu.Lock()
+			_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			err := c.conn.WriteMessage(websocket.TextMessage, message)
+			c.mu.Unlock()
+			if err != nil {
 				logger.Log.Error("WebSocket write error", zap.Error(err))
 				return
 			}
-			c.mu.Unlock()
 
 		case <-ticker.C:
+			// Re-check done so a just-closed connection is never written to.
+			select {
+			case <-c.done:
+				return
+			default:
+			}
 			c.mu.Lock()
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				c.mu.Unlock()
+			_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			err := c.conn.WriteMessage(websocket.PingMessage, nil)
+			c.mu.Unlock()
+			if err != nil {
 				return
 			}
-			c.mu.Unlock()
 		}
 	}
 }
@@ -267,7 +304,7 @@ func (c *Client) handleAuthenticate(payload json.RawMessage) {
 	claims, err := c.hub.tokenMgr.ValidateAccessToken(auth.AccessToken)
 	if err != nil {
 		c.sendError("AUTH_FAILED", "Invalid or expired token")
-		c.conn.Close()
+		c.shutdown()
 		return
 	}
 
@@ -278,7 +315,7 @@ func (c *Client) handleAuthenticate(payload json.RawMessage) {
 	`, claims.SessionID, claims.UserID).Scan(&isActive)
 	if err != nil || !isActive {
 		c.sendError("SESSION_REVOKED", "Session has been revoked")
-		c.conn.Close()
+		c.shutdown()
 		return
 	}
 
@@ -660,6 +697,7 @@ func WebSocketHandler(db *sql.DB, tokenMgr *auth.TokenManager) func(*websocket.C
 			hub:  hub,
 			conn: c,
 			send: make(chan []byte, sendBufSize),
+			done: make(chan struct{}),
 		}
 
 		// WritePump owns all socket writes (messages + pings); ReadPump owns
