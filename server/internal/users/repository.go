@@ -26,6 +26,7 @@ type User struct {
 	Username       sql.NullString
 	DisplayName    string
 	ProfileImageID sql.NullInt64
+	AvatarURL      sql.NullString // secure_url from the media row, when set
 	LastSeen       sql.NullTime
 	IsOnline       bool
 	CreatedAt      time.Time
@@ -45,11 +46,14 @@ type UserSettings struct {
 func (r *Repository) GetByID(ctx context.Context, id int64) (*User, error) {
 	var user User
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, phone_number, email, username, display_name, profile_image_id, last_seen, is_online, created_at, updated_at
-		FROM users WHERE id = $1
+		SELECT u.id, u.phone_number, u.email, u.username, u.display_name, u.profile_image_id,
+		       m.secure_url, u.last_seen, u.is_online, u.created_at, u.updated_at
+		FROM users u
+		LEFT JOIN media m ON m.id = u.profile_image_id
+		WHERE u.id = $1
 	`, id).Scan(
 		&user.ID, &user.PhoneNumber, &user.Email, &user.Username, &user.DisplayName,
-		&user.ProfileImageID, &user.LastSeen, &user.IsOnline, &user.CreatedAt, &user.UpdatedAt,
+		&user.ProfileImageID, &user.AvatarURL, &user.LastSeen, &user.IsOnline, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -101,9 +105,11 @@ func (r *Repository) Search(ctx context.Context, query string, limit int) ([]*Us
 	escaped := escapeLike(query)
 	pattern := "%" + escaped + "%"
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, phone_number, email, username, display_name, profile_image_id, last_seen, is_online, created_at, updated_at
-		FROM users 
-		WHERE username LIKE $1 OR display_name LIKE $2 OR phone_number LIKE $3
+		SELECT u.id, u.phone_number, u.email, u.username, u.display_name, u.profile_image_id,
+		       m.secure_url, u.last_seen, u.is_online, u.created_at, u.updated_at
+		FROM users u
+		LEFT JOIN media m ON m.id = u.profile_image_id
+		WHERE u.username LIKE $1 OR u.display_name LIKE $2 OR u.phone_number LIKE $3
 		LIMIT $4
 	`, pattern, pattern, pattern, limit)
 	if err != nil {
@@ -114,7 +120,7 @@ func (r *Repository) Search(ctx context.Context, query string, limit int) ([]*Us
 	var users []*User
 	for rows.Next() {
 		var user User
-		if err := rows.Scan(&user.ID, &user.PhoneNumber, &user.Email, &user.Username, &user.DisplayName, &user.ProfileImageID, &user.LastSeen, &user.IsOnline, &user.CreatedAt, &user.UpdatedAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.PhoneNumber, &user.Email, &user.Username, &user.DisplayName, &user.ProfileImageID, &user.AvatarURL, &user.LastSeen, &user.IsOnline, &user.CreatedAt, &user.UpdatedAt); err != nil {
 			return nil, err
 		}
 		// Never expose other users' phone numbers or emails through search.

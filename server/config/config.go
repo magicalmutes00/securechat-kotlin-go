@@ -9,14 +9,15 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig
-	Database DatabaseConfig
-	JWT      JWTConfig
-	OTP      OTPConfig
-	Google   GoogleConfig
+	Server     ServerConfig
+	Database   DatabaseConfig
+	JWT        JWTConfig
+	OTP        OTPConfig
+	Google     GoogleConfig
+	Firebase   FirebaseConfig
 	Cloudinary CloudinaryConfig
-	Ollama   OllamaConfig
-	Logger   LoggerConfig
+	Ollama     OllamaConfig
+	Logger     LoggerConfig
 }
 
 type ServerConfig struct {
@@ -63,6 +64,13 @@ type OTPConfig struct {
 
 type GoogleConfig struct {
 	ClientID string
+}
+
+// FirebaseConfig holds the Firebase project identity used to verify Firebase
+// Auth ID tokens (iss/aud are both the project ID). This is public information
+// (it ships inside the Android google-services.json), so a default is safe.
+type FirebaseConfig struct {
+	ProjectID string
 }
 
 type CloudinaryConfig struct {
@@ -180,6 +188,12 @@ func Load() (*Config, error) {
 	cfg.OTP.TwilioFromNumber = viper.GetString("securechat_otp_twilio_from_number")
 
 	cfg.Google.ClientID = viper.GetString("securechat_google_client_id")
+
+	cfg.Firebase.ProjectID = viper.GetString("securechat_firebase_project_id")
+	if cfg.Firebase.ProjectID == "" {
+		// Default to the project that ships in the Android google-services.json.
+		cfg.Firebase.ProjectID = "chatgo-364a2"
+	}
 
 	cfg.Cloudinary.CloudName = viper.GetString("securechat_cloudinary_cloud_name")
 	cfg.Cloudinary.APIKey = viper.GetString("securechat_cloudinary_api_key")

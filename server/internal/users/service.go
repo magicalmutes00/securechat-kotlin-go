@@ -32,6 +32,21 @@ func (s *Service) UpdateProfile(ctx context.Context, userID int64, displayName, 
 	return s.repo.UpdateProfile(ctx, userID, displayName, username)
 }
 
+// UpdateProfileWithAvatar updates display name/username and, when avatarID is
+// non-nil, points profile_image_id at the given media record.
+func (s *Service) UpdateProfileWithAvatar(ctx context.Context, userID int64, displayName, username string, avatarID *int64) (*User, error) {
+	if avatarID != nil {
+		if *avatarID <= 0 {
+			return nil, apperrors.ErrInvalidRequest
+		}
+		if _, err := s.UpdateAvatar(ctx, userID, *avatarID); err != nil {
+			return nil, err
+		}
+	}
+
+	return s.UpdateProfile(ctx, userID, displayName, username)
+}
+
 func (s *Service) UpdateAvatar(ctx context.Context, userID int64, imageID int64) (*User, error) {
 	if imageID <= 0 {
 		return nil, apperrors.ErrInvalidRequest

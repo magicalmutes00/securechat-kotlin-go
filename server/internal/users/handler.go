@@ -29,8 +29,9 @@ func RegisterRoutes(api fiber.Router, db *sql.DB, tokenManager *auth.TokenManage
 }
 
 type UpdateProfileRequest struct {
-	DisplayName string `json:"display_name" validate:"required,min=1,max=100"`
-	Username    string `json:"username,omitempty" validate:"omitempty,min=3,max=50,alphanum"`
+	DisplayName    string  `json:"display_name" validate:"required,min=1,max=100"`
+	Username       string  `json:"username,omitempty" validate:"omitempty,min=3,max=50,alphanum"`
+	ProfileImageID *int64  `json:"profile_image_id,omitempty"`
 }
 
 type UserResponse struct {
@@ -40,6 +41,7 @@ type UserResponse struct {
 	Username       *string `json:"username,omitempty"`
 	DisplayName    string  `json:"display_name"`
 	ProfileImageID *int64  `json:"profile_image_id,omitempty"`
+	AvatarURL      *string `json:"avatar_url,omitempty"`
 	LastSeen       *int64  `json:"last_seen,omitempty"`
 	IsOnline       bool    `json:"is_online"`
 	CreatedAt      int64   `json:"created_at"`
@@ -73,7 +75,7 @@ func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
 		return c.Status(400).JSON(apperrors.NewErrorResponse(apperrors.ErrInvalidRequest))
 	}
 
-	user, err := h.service.UpdateProfile(c.Context(), userID, req.DisplayName, req.Username)
+	user, err := h.service.UpdateProfileWithAvatar(c.Context(), userID, req.DisplayName, req.Username, req.ProfileImageID)
 	if err != nil {
 		var appErr *apperrors.AppError
 		if errors.As(err, &appErr) {
@@ -127,6 +129,7 @@ func toUserResponse(user *User) UserResponse {
 		Username:       nullStringPtr(user.Username),
 		DisplayName:    user.DisplayName,
 		ProfileImageID: nullInt64Ptr(user.ProfileImageID),
+		AvatarURL:      nullStringPtr(user.AvatarURL),
 		LastSeen:       lastSeen,
 		IsOnline:       user.IsOnline,
 		CreatedAt:      user.CreatedAt.UnixMilli(),

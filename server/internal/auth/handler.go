@@ -18,28 +18,32 @@ import (
 )
 
 type Handler struct {
-	service      *Service
-	tokenManager *TokenManager
-	cfg          *config.Config
+	service           *Service
+	tokenManager      *TokenManager
+	cfg               *config.Config
+	firebaseVerifier  *FirebaseTokenVerifier
 }
 
 func RegisterRoutes(api fiber.Router, db *sql.DB, tokenManager *TokenManager, cfg *config.Config, otpService *otp.Service) {
 	repo := NewRepository(db)
 	service := NewService(repo, otpService, tokenManager, cfg)
 	handler := &Handler{
-		service:      service,
-		tokenManager: tokenManager,
-		cfg:          cfg,
+		service:          service,
+		tokenManager:     tokenManager,
+		cfg:              cfg,
+		firebaseVerifier: NewFirebaseTokenVerifier(cfg.Firebase.ProjectID),
 	}
 
 	auth := api.Group("/auth")
 	auth.Post("/send-otp", handler.SendOTP)
 	auth.Post("/verify-otp", handler.VerifyOTP)
 	auth.Post("/google", handler.GoogleAuth)
+	auth.Post("/firebase", handler.FirebaseAuth)
 	auth.Post("/refresh", handler.RefreshToken)
 	// Logout must sit behind the auth middleware: it needs the session ID
 	// claim from the access token to know which session to revoke.
 	auth.Post("/logout", handler.Logout, middleware.JWTAuth(tokenManager, middleware.NewDBSessionChecker(db)))
+	auth.Post("/logout-all", handler.LogoutAll, middleware.JWTAuth(tokenManager, middleware.NewDBSessionChecker(db)))
 }
 
 type SendOTPRequest struct {
@@ -194,6 +198,76 @@ func (h *Handler) GoogleAuth(c *fiber.Ctx) error {
 				ProfileImageID: nullInt64(result.User.ProfileImageID),
 			},
 		},
+	})
+}
+
+type FirebaseAuthRequest struct {
+	IDToken          string `json:"id_token" validate:"required"`
+	DeviceName       string `json:"device_name" validate:"required,min=1,max=100"`
+	DeviceIdentifier string `json:"device_identifier" validate:"required,min=1,max=255"`
+}
+
+func (h *Handler) FirebaseAuth(c *fiber.Ctx) error {
+	var req FirebaseAuthRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(apperrors.NewErrorResponse(apperrors.ErrInvalidRequest))
+	}
+	if req.IDToken == "" ||
+		req.DeviceName == "" || len(req.DeviceName) > 100 ||
+		req.DeviceIdentifier == "" || len(req.DeviceIdentifier) > 255 {
+		return c.Status(400).JSON(apperrors.NewErrorResponse(apperrors.ErrInvalidRequest))
+	}
+
+	info, err := h.firebaseVerifier.Verify(c.Context(), req.IDToken)
+	if err != nil {
+		logger.Log.Warn("Invalid firebase id token", zap.Error(err))
+		return c.Status(401).JSON(apperrors.NewErrorResponse(apperrors.ErrUnauthorized))
+	}
+
+	result, err := h.service.SignInWithFirebase(c.Context(), info.PhoneNumber, req.DeviceName, req.DeviceIdentifier)
+	if err != nil {
+		var appErr *apperrors.AppError
+		if errors.As(err, &appErr) {
+			return c.Status(appErr.Status).JSON(apperrors.NewErrorResponse(appErr))
+		}
+		logger.Log.Error("Failed to sign in with Firebase", zap.Error(err))
+		return c.Status(500).JSON(apperrors.NewErrorResponse(apperrors.ErrInternalServer))
+	}
+
+	return c.JSON(fiber.Map{
+		"success": true,
+		"data": VerifyOTPResponse{
+			AccessToken:      result.AccessToken,
+			RefreshToken:     result.RefreshToken,
+			AccessExpiresIn:  result.AccessExpiresIn,
+			RefreshExpiresIn: result.RefreshExpiresIn,
+			User: UserInfo{
+				ID:             result.User.ID,
+				PhoneNumber:    nullString(result.User.PhoneNumber),
+				Email:          nullString(result.User.Email),
+				DisplayName:    result.User.DisplayName,
+				Username:       nullString(result.User.Username),
+				ProfileImageID: nullInt64(result.User.ProfileImageID),
+			},
+		},
+	})
+}
+
+func (h *Handler) LogoutAll(c *fiber.Ctx) error {
+	userID := c.Locals("user_id")
+	if userID == nil {
+		return c.Status(401).JSON(apperrors.NewErrorResponse(apperrors.ErrUnauthorized))
+	}
+
+	err := h.service.LogoutAll(c.Context(), userID.(int64))
+	if err != nil {
+		logger.Log.Error("Failed to logout all devices", zap.Error(err))
+		return c.Status(500).JSON(apperrors.NewErrorResponse(apperrors.ErrInternalServer))
+	}
+
+	return c.JSON(fiber.Map{
+		"success": true,
+		"data":    fiber.Map{"message": "Logged out from all devices"},
 	})
 }
 

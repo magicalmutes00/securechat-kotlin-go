@@ -94,6 +94,23 @@ func (s *Service) SignInWithGoogle(ctx context.Context, info GoogleUserInfo, dev
 	return s.completeAuth(ctx, user, deviceName, deviceIdentifier)
 }
 
+// SignInWithFirebase authenticates a user whose phone number was verified by
+// Firebase Auth (the ID token was already validated server-side; only the
+// verified claims arrive here). Existing OTP users are matched by phone, so a
+// Firebase sign-in simply upgrades their session without losing data.
+func (s *Service) SignInWithFirebase(ctx context.Context, phoneNumber, deviceName, deviceIdentifier string) (*RegisterResult, error) {
+	if phoneNumber == "" {
+		return nil, apperrors.ErrInvalidRequest
+	}
+
+	user, err := s.findOrCreateUser(ctx, phoneNumber)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find/create firebase user: %w", err)
+	}
+
+	return s.completeAuth(ctx, user, deviceName, deviceIdentifier)
+}
+
 func (s *Service) completeAuth(ctx context.Context, user *User, deviceName, deviceIdentifier string) (*RegisterResult, error) {
 	// Create device
 	device, err := s.repo.CreateDevice(ctx, user.ID, deviceName, deviceIdentifier, "android")
