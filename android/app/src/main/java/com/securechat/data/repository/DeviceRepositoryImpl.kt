@@ -26,7 +26,12 @@ class DeviceRepositoryImpl @Inject constructor(
         return withContext(Dispatchers.IO) {
             apiService.getDevices()
                 .map { dtos ->
-                    dtos.map { mapToDevice(it) }
+                    // Mirror the server's device list into Room so the observed
+                    // flow (used by the sessions screen) reflects the refresh.
+                    val entities = dtos.map { mapToEntity(it) }
+                    database.deviceDao().deleteAll()
+                    database.deviceDao().insertAll(entities)
+                    entities.map { mapToDevice(it) }
                 }
         }
     }
@@ -78,6 +83,21 @@ class DeviceRepositoryImpl @Inject constructor(
             platform = entity.platform,
             createdAt = entity.createdAt,
             lastSeen = entity.lastSeen
+        )
+    }
+
+    private fun mapToEntity(dto: DeviceDto): DeviceEntity {
+        return DeviceEntity(
+            // Use the server id as the local primary key so revoke calls
+            // (which need the server device id) reference the right row.
+            id = dto.id,
+            serverId = dto.id,
+            userId = dto.user_id,
+            deviceName = dto.device_name,
+            deviceIdentifier = dto.device_identifier,
+            platform = dto.platform,
+            createdAt = dto.created_at,
+            lastSeen = dto.last_seen
         )
     }
 }

@@ -7,7 +7,12 @@ import kotlinx.coroutines.flow.Flow
 
 interface UserRepository {
     suspend fun getCurrentUser(): Result<User>
-    suspend fun updateProfile(displayName: String, username: String?): Result<User>
+    suspend fun updateProfile(
+        displayName: String,
+        username: String?,
+        profileImageId: Long? = null,
+        avatarUrl: String? = null
+    ): Result<User>
     suspend fun updateAvatar(imageId: Long): Result<User>
     suspend fun searchUsers(query: String, limit: Int): Result<List<User>>
     suspend fun getUserSettings(): Result<UserSettings>

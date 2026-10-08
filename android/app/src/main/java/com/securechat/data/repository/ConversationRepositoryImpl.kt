@@ -205,7 +205,7 @@ class ConversationRepositoryImpl @Inject constructor(
     private fun mapToMedia(dto: com.securechat.data.remote.dto.MediaDto): com.securechat.domain.model.Media {
         return com.securechat.domain.model.Media(
             id = dto.id,
-            messageId = dto.message_id,
+            messageId = dto.message_id ?: 0,
             cloudinaryPublicId = dto.cloudinary_public_id,
             resourceType = com.securechat.domain.model.MediaResourceType.valueOf(dto.resource_type.uppercase()),
             secureUrl = dto.secure_url,

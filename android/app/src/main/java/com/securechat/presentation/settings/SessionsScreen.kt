@@ -12,88 +12,96 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.PhoneIphone
-import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
-import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.securechat.R
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.securechat.core.utils.DeviceInfo
 import com.securechat.core.utils.formatTimestamp
 import com.securechat.domain.model.Device
-import com.securechat.presentation.theme.Theme
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SessionsScreen(
     onBack: () -> Unit,
-    onRevokeDevice: (Long) -> Unit
+    viewModel: SettingsViewModel = hiltViewModel()
 ) {
-    // Sample data - would come from ViewModel
-    val currentDeviceId = 1L
-    val devices = listOf(
-        Device(1, 1, "Pixel 8 Pro", "android_abc123", "android", System.currentTimeMillis() - 3600000, System.currentTimeMillis()),
-        Device(2, 1, "iPhone 15", "ios_xyz789", "ios", System.currentTimeMillis() - 86400000, System.currentTimeMillis() - 86400000),
-        Device(3, 1, "Windows Desktop", "win_def456", "windows", System.currentTimeMillis() - 604800000, System.currentTimeMillis() - 604800000),
-    )
+    val context = LocalContext.current
+    val devices by viewModel.devices.collectAsState()
+    val currentIdentifier = DeviceInfo.deviceIdentifier(context)
 
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.Top
-    ) {
-        Text(
-            text = "Active Sessions",
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.fillMaxWidth().padding(24.dp)
-        )
-        
-        Text(
-            text = "Manage your active sessions across all devices",
-            fontSize = 14.sp,
-            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 16.dp)
-        )
-        
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(vertical = 8.dp)
-        ) {
-            items(devices) { device ->
-                SessionItem(
-                    device = device,
-                    isCurrent = device.id == currentDeviceId,
-                    onRevoke = { onRevokeDevice(device.id) }
-                )
-                
-                if (device != devices.last()) Divider(modifier = Modifier.padding(start = 72.dp))
-            }
-        }
-        
-        // Security notice
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(24.dp)
-        ) {
-            androidx.compose.material3.Text(
-                text = "If you see an unfamiliar device, revoke it immediately and change your password.",
-                fontSize = 12.sp,
-                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-                style = androidx.compose.ui.text.TextStyle(fontWeight = FontWeight.Medium)
+    LaunchedEffect(Unit) {
+        viewModel.refreshDevices()
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Active Sessions") },
+                navigationIcon = {
+                    androidx.compose.material3.IconButton(onClick = onBack) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
+                        )
+                    }
+                }
             )
+        }
+    ) { padding ->
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            Text(
+                text = "Manage the devices signed in to your account.",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 8.dp)
+            )
+
+            if (devices.isEmpty()) {
+                Text(
+                    text = "No active sessions found.",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(20.dp)
+                )
+            } else {
+                androidx.compose.foundation.lazy.LazyColumn(
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    items(devices, key = { it.id }) { device ->
+                        SessionItem(
+                            device = device,
+                            isCurrent = device.deviceIdentifier == currentIdentifier,
+                            onRevoke = { viewModel.revokeDevice(device.id) }
+                        )
+                        if (device != devices.last()) {
+                            Divider(modifier = Modifier.padding(start = 72.dp))
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -105,66 +113,59 @@ fun SessionItem(
     onRevoke: () -> Unit
 ) {
     val platformIcon = when (device.platform.lowercase()) {
-        "android" -> Icons.Default.PhoneAndroid
-        "ios" -> Icons.Default.PhoneIphone
-        "windows" -> Icons.Default.Computer
-        "mac" -> Icons.Default.Computer
-        "linux" -> Icons.Default.Computer
-        else -> Icons.Default.Devices
+        "android" -> androidx.compose.material.icons.Icons.Default.PhoneAndroid
+        "ios" -> androidx.compose.material.icons.Icons.Default.PhoneIphone
+        "windows", "mac", "linux", "desktop" -> androidx.compose.material.icons.Icons.Default.Computer
+        else -> androidx.compose.material.icons.Icons.Default.Devices
     }
 
-    ListItem(
+    androidx.compose.material3.ListItem(
         modifier = Modifier.fillMaxWidth(),
         leadingContent = {
             androidx.compose.material3.Icon(
                 imageVector = platformIcon,
                 contentDescription = device.platform,
-                tint = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(40.dp).padding(end = 16.dp)
             )
         },
         headlineContent = {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            androidx.compose.foundation.layout.Row(
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
             ) {
                 Text(text = device.deviceName, fontSize = 16.sp)
                 if (isCurrent) {
-                    androidx.compose.material3.Text(
+                    Text(
                         text = "Current",
                         fontSize = 12.sp,
-                        color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                        color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Medium
                     )
                 }
             }
         },
         supportingContent = {
-            Column {
+            androidx.compose.foundation.layout.Column {
                 Text(
                     text = device.platform.replaceFirstChar { it.uppercase() },
                     fontSize = 14.sp,
-                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 val lastActiveText = device.lastSeen?.let { it.formatTimestamp() } ?: "Unknown"
                 Text(
                     text = "Last active: $lastActiveText",
                     fontSize = 12.sp,
-                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                 )
             }
         },
         trailingContent = {
             if (!isCurrent) {
-                androidx.compose.material3.IconButton(
-                    onClick = onRevoke,
-                    colors = androidx.compose.material3.IconButtonDefaults.iconButtonColors(
-                        containerColor = androidx.compose.material3.MaterialTheme.colorScheme.errorContainer,
-                        contentColor = androidx.compose.material3.MaterialTheme.colorScheme.error
-                    )
-                ) {
+                androidx.compose.material3.IconButton(onClick = onRevoke) {
                     Icon(
-                        imageVector = Icons.Default.Logout,
+                        imageVector = androidx.compose.material.icons.Icons.Default.Logout,
                         contentDescription = "Revoke session",
+                        tint = MaterialTheme.colorScheme.error,
                         modifier = Modifier.size(20.dp)
                     )
                 }

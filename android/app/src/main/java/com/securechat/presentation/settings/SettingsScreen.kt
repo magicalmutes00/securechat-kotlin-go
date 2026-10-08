@@ -2,213 +2,197 @@ package com.securechat.presentation.settings
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Storage
-import androidx.compose.material3.Button
 import androidx.compose.material3.Divider
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.securechat.R
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.securechat.presentation.components.Avatar
-import com.securechat.presentation.theme.Theme
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
+    onBack: () -> Unit,
+    onProfileClick: () -> Unit,
+    onSessionsClick: () -> Unit,
+    onNotificationsClick: () -> Unit,
+    onThemeClick: () -> Unit,
+    onChatSettingsClick: () -> Unit,
+    onStorageClick: () -> Unit,
+    onLanguageClick: () -> Unit,
+    onAboutClick: () -> Unit,
     onLogout: () -> Unit,
     onLogoutAll: () -> Unit,
-    onBack: () -> Unit
+    viewModel: SettingsViewModel = hiltViewModel()
 ) {
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.Top
-    ) {
-        // Profile Header
-        Box(
+    val user by viewModel.user.collectAsState()
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Settings") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
-                .height(120.dp),
-            contentAlignment = Alignment.Center
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
         ) {
-            Column(
-                modifier = Modifier.padding(start = 16.dp),
-                verticalArrangement = Arrangement.Center
+            // Profile header reflects the signed-in user.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onProfileClick)
+                    .padding(20.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(text = "John Doe", fontSize = 20.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium)
-                Text(text = "@johndoe", fontSize = 14.sp, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(text = "+1 555 123 4567", fontSize = 12.sp, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                Avatar(
+                    url = user?.avatarUrl,
+                    name = user?.displayName ?: "User",
+                    size = 64
+                )
+                Spacer(modifier = Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = user?.displayName ?: "User",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    user?.username?.let {
+                        Text(
+                            text = "@$it",
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    user?.phoneNumber?.takeIf { it.isNotBlank() }?.let {
+                        Text(
+                            text = it,
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Icon(
+                    imageVector = Icons.Default.ChevronRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
-            
-            Avatar(url = null, name = "John Doe", modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(end = 16.dp)
-                .size(60.dp))
-        }
-        
-        Divider()
-        
-        // Settings Sections
-        SettingsSection(title = "Account") {
-            SettingsItem(
-                icon = Icons.Default.Person,
-                title = "Profile",
-                subtitle = "Edit your profile and avatar",
-                onClick = { /* Navigate to profile */ }
-            )
-            
-            SettingsItem(
-                icon = Icons.Default.Security,
-                title = "Privacy & Security",
-                subtitle = "Two-factor auth, blocked users, sessions",
-                onClick = { /* Navigate to privacy */ }
-            )
-            
-            SettingsItem(
-                icon = Icons.Default.Notifications,
-                title = "Notifications",
-                subtitle = "Message tones, vibration, preview",
-                onClick = { /* Navigate to notifications */ }
-            )
-        }
-        
-        SettingsSection(title = "Chat") {
-            SettingsItem(
-                icon = Icons.Default.Palette,
-                title = "Theme",
-                subtitle = "Light, Dark, System default",
-                onClick = { /* Navigate to theme */ }
-            )
-            
-            SettingsItem(
-                icon = Icons.Default.Chat,
-                title = "Chat Settings",
-                subtitle = "Media auto-download, font size, wallpaper",
-                onClick = { /* Navigate to chat settings */ }
-            )
-            
-            SettingsItem(
-                icon = Icons.Default.Storage,
-                title = "Storage Usage",
-                subtitle = "Manage media, clear cache",
-                onClick = { /* Navigate to storage */ }
-            )
-        }
-        
-        SettingsSection(title = "Advanced") {
-            SettingsItem(
-                icon = Icons.Default.Language,
-                title = "Language",
-                subtitle = "English (US)",
-                onClick = { /* Navigate to language */ }
-            )
-            
-            SettingsItem(
-                icon = Icons.Default.Info,
-                title = "About SecureChat",
-                subtitle = "Version 1.0.0",
-                onClick = { /* Navigate to about */ }
-            )
-        }
-        
-        SettingsSection(title = "Danger Zone") {
-            SettingsItem(
-                icon = Icons.Default.Logout,
-                title = "Logout",
-                subtitle = "Sign out of this device",
-                titleColor = androidx.compose.material3.MaterialTheme.colorScheme.error,
-                onClick = onLogout
-            )
-            
-            SettingsItem(
-                icon = Icons.Default.DeleteForever,
-                title = "Logout All Devices",
-                subtitle = "Sign out everywhere",
-                titleColor = androidx.compose.material3.MaterialTheme.colorScheme.error,
-                onClick = onLogoutAll
-            )
+
+            Divider()
+
+            SettingsSection(title = "Account") {
+                SettingItem("Profile", Icons.Default.Person, onProfileClick)
+                SettingItem("Active Sessions", Icons.Default.Devices, onSessionsClick)
+            }
+
+            SettingsSection(title = "Preferences") {
+                SettingItem("Notifications", Icons.Default.Notifications, onNotificationsClick)
+                SettingItem("Theme", Icons.Default.Palette, onThemeClick)
+                SettingItem("Chat Settings", Icons.Default.Chat, onChatSettingsClick)
+                SettingItem("Storage Usage", Icons.Default.Storage, onStorageClick)
+                SettingItem("Language", Icons.Default.Language, onLanguageClick)
+            }
+
+            SettingsSection(title = "About") {
+                SettingItem("About SecureChat", Icons.Default.Info, onAboutClick)
+            }
+
+            SettingsSection(title = "Session") {
+                SettingItem("Log out", Icons.Default.Logout, onLogout)
+                SettingItem("Log out of all devices", Icons.Default.DeleteForever) {
+                    viewModel.logoutAllDevices()
+                    onLogoutAll()
+                }
+            }
         }
     }
 }
 
 @Composable
-fun SettingsSection(
+private fun SettingsSection(
     title: String,
     content: @Composable () -> Unit
 ) {
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
-    ) {
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
         Text(
             text = title.uppercase(),
             fontSize = 12.sp,
-            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
-            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp)
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 20.dp, top = 8.dp, bottom = 4.dp)
         )
-        
         content()
-        
-        Divider(modifier = Modifier.padding(top = 8.dp))
     }
 }
 
 @Composable
-fun SettingsItem(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+private fun SettingItem(
     title: String,
-    subtitle: String,
-    titleColor: androidx.compose.ui.graphics.Color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface,
+    icon: ImageVector,
     onClick: () -> Unit
 ) {
     ListItem(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() },
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         leadingContent = {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(24.dp).padding(end = 16.dp)
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(24.dp)
             )
         },
-        headlineContent = {
-            Text(
-                text = title,
-                color = titleColor,
-                fontSize = 16.sp
-            )
-        },
-        supportingContent = {
-            Text(text = subtitle, fontSize = 14.sp, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-        },
+        headlineContent = { Text(text = title, fontSize = 16.sp) },
         trailingContent = {
             Icon(
                 imageVector = Icons.Default.ChevronRight,
                 contentDescription = null,
-                tint = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     )

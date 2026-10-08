@@ -5,11 +5,17 @@ import androidx.lifecycle.viewModelScope
 import com.securechat.core.security.TokenStorage
 import com.securechat.data.sync.WebSocketEventProcessor
 import com.securechat.data.remote.websocket.WebSocketManager
+import com.securechat.domain.model.ThemeMode
 import com.securechat.domain.model.User
 import com.securechat.domain.repository.AuthRepository
+import com.securechat.domain.repository.UserRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -17,12 +23,24 @@ import javax.inject.Inject
 class MainViewModel @Inject constructor(
     private val tokenStorage: TokenStorage,
     private val authRepository: AuthRepository,
+    private val userRepository: UserRepository,
     private val webSocketManager: WebSocketManager,
     private val webSocketEventProcessor: WebSocketEventProcessor
 ) : ViewModel() {
 
     private val _authState = MutableStateFlow<AuthState>(AuthState.Unknown)
     val authState = _authState.asStateFlow()
+
+    // Set when a freshly authenticated user still has no username, meaning they
+    // have not completed first-time profile setup. Returning users who skipped
+    // setup are NOT nagged on cold start (loadUserOrDefault leaves this false).
+    private val _needsProfileSetup = MutableStateFlow(false)
+    val needsProfileSetup = _needsProfileSetup.asStateFlow()
+
+    // Theme is applied at the Activity level and driven by the persisted setting.
+    val themeMode: StateFlow<ThemeMode> = userRepository.observeUserSettings()
+        .map { it?.theme ?: ThemeMode.SYSTEM }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ThemeMode.SYSTEM)
 
     sealed interface AuthState {
         data class Authenticated(val user: User) : AuthState
@@ -62,12 +80,17 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             val result = authRepository.getCurrentUser()
             result.onSuccess { user ->
+                _needsProfileSetup.value = user.username == null
                 _authState.value = AuthState.Authenticated(user)
             }.onFailure {
                 // Tokens may have expired while the app was backgrounded.
                 tryRefreshToken()
             }
         }
+    }
+
+    fun onProfileSetupHandled() {
+        _needsProfileSetup.value = false
     }
 
     fun onLogout() {

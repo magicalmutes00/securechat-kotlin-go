@@ -22,6 +22,7 @@ data class UserEntity(
     val username: String?,
     val displayName: String,
     val profileImageId: Long? = null,
+    val avatarUrl: String? = null,
     val lastSeen: Long? = null,
     val isOnline: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),

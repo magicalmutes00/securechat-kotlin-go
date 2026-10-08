@@ -41,7 +41,7 @@ import com.securechat.data.local.entity.UserSettingsEntity
         PendingOperationEntity::class,
         UserSettingsEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -68,7 +68,7 @@ abstract class SecureChatDatabase : RoomDatabase() {
                     SecureChatDatabase::class.java,
                     "securechat.db"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build()
                 INSTANCE = instance
                 instance
@@ -82,6 +82,14 @@ abstract class SecureChatDatabase : RoomDatabase() {
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 // No schema change between versions 1 and 2.
+            }
+        }
+
+        // Version 3 adds the avatar URL (resolved server-side from the media
+        // table) so the profile header can render the photo without a lookup.
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE users ADD COLUMN avatarUrl TEXT")
             }
         }
     }

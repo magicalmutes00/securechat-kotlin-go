@@ -8,6 +8,7 @@ interface AuthRepository {
     suspend fun sendOtp(phoneNumber: String): Result<OtpSentResult>
     suspend fun verifyOtp(phoneNumber: String, otp: String, deviceName: String, deviceIdentifier: String): Result<AuthResult>
     suspend fun googleSignIn(idToken: String, deviceName: String, deviceIdentifier: String): Result<AuthResult>
+    suspend fun firebaseSignIn(idToken: String, deviceName: String, deviceIdentifier: String): Result<AuthResult>
     suspend fun refreshToken(): Result<TokenPair>
     suspend fun logout(): Result<Unit>
     suspend fun logoutAllDevices(): Result<Unit>

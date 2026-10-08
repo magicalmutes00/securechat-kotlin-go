@@ -77,6 +77,22 @@ class AuthRepositoryImpl @Inject constructor(
         }
     }
 
+    override suspend fun firebaseSignIn(
+        idToken: String,
+        deviceName: String,
+        deviceIdentifier: String
+    ): Result<AuthRepository.AuthResult> {
+        return withContext(Dispatchers.IO) {
+            apiService.firebaseSignIn(com.securechat.data.remote.dto.FirebaseSignInRequest(
+                id_token = idToken,
+                device_name = deviceName,
+                device_identifier = deviceIdentifier
+            )).flatMap { response ->
+                persistAuthResult(response)
+            }
+        }
+    }
+
     private suspend fun persistAuthResult(response: VerifyOtpResponse): Result<AuthRepository.AuthResult> {
         // Save tokens
         return tokenStorage.saveTokens(
@@ -91,6 +107,7 @@ class AuthRepositoryImpl @Inject constructor(
                 username = response.user.username,
                 displayName = response.user.display_name,
                 profileImageId = response.user.profile_image_id,
+                avatarUrl = response.user.avatar_url,
                 lastSeen = response.user.last_seen,
                 isOnline = response.user.is_online,
                 createdAt = response.user.created_at,
@@ -148,8 +165,17 @@ class AuthRepositoryImpl @Inject constructor(
     }
 
     override suspend fun logoutAllDevices(): Result<Unit> {
-        // Not implemented in API yet
-        return logout()
+        return withContext(Dispatchers.IO) {
+            // Revoke every session for this user server-side, then clear local
+            // state. Local state is cleared even if the call fails, for the same
+            // reason logout() does — the user is signed out on this device
+            // regardless, and stale tokens must not replay a refresh later.
+            apiService.logoutAll()
+            tokenStorage.clear().flatMap {
+                _currentUser.value = null
+                Result.success(Unit)
+            }
+        }
     }
 
     override suspend fun getCurrentUser(): Result<User> {
@@ -178,6 +204,7 @@ class AuthRepositoryImpl @Inject constructor(
             username = dto.username,
             displayName = dto.display_name,
             profileImageId = dto.profile_image_id,
+            avatarUrl = dto.avatar_url,
             lastSeen = dto.last_seen,
             isOnline = dto.is_online,
             createdAt = dto.created_at,
@@ -192,6 +219,7 @@ class AuthRepositoryImpl @Inject constructor(
             username = entity.username,
             displayName = entity.displayName,
             profileImageId = entity.profileImageId,
+            avatarUrl = entity.avatarUrl,
             lastSeen = entity.lastSeen,
             isOnline = entity.isOnline,
             createdAt = entity.createdAt,
@@ -206,6 +234,7 @@ class AuthRepositoryImpl @Inject constructor(
             username = user.username,
             displayName = user.displayName,
             profileImageId = user.profileImageId,
+            avatarUrl = user.avatarUrl,
             lastSeen = user.lastSeen,
             isOnline = user.isOnline,
             createdAt = user.createdAt,

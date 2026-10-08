@@ -19,8 +19,10 @@ interface ApiService {
     suspend fun sendOtp(request: SendOtpRequest): Result<SendOtpResponse>
     suspend fun verifyOtp(request: VerifyOtpRequest): Result<VerifyOtpResponse>
     suspend fun googleSignIn(request: GoogleSignInRequest): Result<VerifyOtpResponse>
+    suspend fun firebaseSignIn(request: FirebaseSignInRequest): Result<VerifyOtpResponse>
     suspend fun refreshToken(request: RefreshTokenRequest): Result<RefreshTokenResponse>
     suspend fun logout(): Result<Unit>
+    suspend fun logoutAll(): Result<Unit>
 
     // Users
     suspend fun getCurrentUser(): Result<UserDto>
@@ -140,6 +142,13 @@ class ApiServiceImpl(
         }
     }
 
+    override suspend fun firebaseSignIn(request: FirebaseSignInRequest): Result<VerifyOtpResponse> = executeRequest {
+        client.post("$baseUrl/auth/firebase") {
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }
+    }
+
     // allowRefresh = false: a rejected refresh token must surface as an error,
     // never trigger another refresh attempt.
     override suspend fun refreshToken(request: RefreshTokenRequest): Result<RefreshTokenResponse> = executeRequest(allowRefresh = false) {
@@ -151,6 +160,12 @@ class ApiServiceImpl(
 
     override suspend fun logout(): Result<Unit> = executeRequest {
         client.post("$baseUrl/auth/logout") {
+            header("Authorization", "Bearer ${tokenProvider()}")
+        }
+    }
+
+    override suspend fun logoutAll(): Result<Unit> = executeRequest {
+        client.post("$baseUrl/auth/logout-all") {
             header("Authorization", "Bearer ${tokenProvider()}")
         }
     }

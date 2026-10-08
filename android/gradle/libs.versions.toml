@@ -132,6 +132,7 @@ androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version
 # Firebase
 firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebaseBom" }
 firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging" }
+firebase-auth = { group = "com.google.firebase", name = "firebase-auth" }
 
 # Credential Manager (Google Sign-In)
 androidx-credentials = { group = "androidx.credentials", name = "credentials", version.ref = "credentials" }

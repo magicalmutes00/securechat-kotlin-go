@@ -1,5 +1,8 @@
 package com.securechat.presentation.auth
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -19,7 +22,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.OffsetMapping
@@ -27,23 +32,28 @@ import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.securechat.R
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.securechat.core.utils.DeviceInfo
 import com.securechat.core.utils.FormatOtp
-import com.securechat.presentation.theme.Theme
+
+/** Unwraps the Activity from a (possibly wrapped) Compose context. */
+private fun Context.findActivity(): Activity? {
+    var ctx: Context? = this
+    while (ctx is ContextWrapper) {
+        if (ctx is Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
+}
 
 @Composable
 fun OtpVerifyScreen(
-    phoneNumber: String,
-    deviceName: String,
-    deviceIdentifier: String,
     onVerifySuccess: () -> Unit,
     onResendOtp: () -> Unit
 ) {
-    val viewModel = androidx.hilt.navigation.compose.hiltViewModel<OtpVerifyViewModel>()
+    val context = LocalContext.current
+    val viewModel = hiltViewModel<OtpVerifyViewModel>()
     var otp by remember { mutableStateOf("") }
-
-    // Format OTP as user types (add space after 3 digits)
-    val formattedOtp = FormatOtp.format(otp)
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -53,13 +63,13 @@ fun OtpVerifyScreen(
         Text(
             text = "Enter OTP",
             fontSize = 28.sp,
-            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+            fontWeight = FontWeight.Bold
         )
 
         Spacer(modifier = Modifier.padding(8.dp))
 
         Text(
-            text = "We sent a 6-digit code to $phoneNumber",
+            text = "We sent a 6-digit code to ${viewModel.displayPhone}",
             fontSize = 16.sp
         )
 
@@ -68,17 +78,15 @@ fun OtpVerifyScreen(
         TextField(
             value = otp,
             onValueChange = { newOtp ->
-                // Only allow digits, max 6
-                val filtered = newOtp.filter { it.isDigit() }.take(6)
-                otp = filtered
-                viewModel.onOtpChanged(filtered)
+                otp = newOtp.filter { it.isDigit() }.take(6)
+                viewModel.clearError()
             },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
             label = { Text("OTP Code") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Number,
-                imeAction = androidx.compose.ui.text.input.ImeAction.Done
+                imeAction = ImeAction.Done
             ),
             visualTransformation = VisualTransformation { text ->
                 val formatted = FormatOtp.format(text.text)
@@ -100,9 +108,13 @@ fun OtpVerifyScreen(
 
         Button(
             onClick = {
-                viewModel.verifyOtp(phoneNumber, deviceName, deviceIdentifier) { success ->
-                    if (success) onVerifySuccess()
-                }
+                viewModel.verifyOtp(
+                    code = otp,
+                    deviceName = DeviceInfo.deviceName(),
+                    deviceIdentifier = DeviceInfo.deviceIdentifier(context),
+                    onSuccess = { onVerifySuccess() },
+                    onFailure = { otp = "" }
+                )
             },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
             enabled = otp.length == 6 && !viewModel.isLoading.value
@@ -124,7 +136,16 @@ fun OtpVerifyScreen(
         } else {
             TextButton(
                 onClick = {
-                    viewModel.resendOtp(phoneNumber) { onResendOtp() }
+                    val activity = context.findActivity()
+                    if (activity != null) {
+                        viewModel.resendCode(
+                            activity = activity,
+                            deviceName = DeviceInfo.deviceName(),
+                            deviceIdentifier = DeviceInfo.deviceIdentifier(context),
+                            onResent = { onResendOtp() },
+                            onAuthenticated = { onVerifySuccess() }
+                        )
+                    }
                 },
                 enabled = !viewModel.isLoading.value
             ) {

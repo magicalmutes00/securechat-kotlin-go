@@ -153,6 +153,7 @@ dependencies {
     // Firebase
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.messaging)
+    implementation(libs.firebase.auth)
 
     // Credential Manager (Google Sign-In)
     implementation(libs.androidx.credentials)

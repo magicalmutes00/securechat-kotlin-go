@@ -1,7 +1,9 @@
 package com.securechat.presentation.profile
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -9,122 +11,163 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.securechat.R
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.securechat.presentation.components.Avatar
-import com.securechat.presentation.theme.Theme
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(
     onBack: () -> Unit,
-    onSave: () -> Unit
+    onSave: () -> Unit,
+    viewModel: ProfileViewModel = hiltViewModel()
 ) {
-    var displayName by remember { mutableStateOf("John Doe") }
-    var username by remember { mutableStateOf("johndoe") }
-    var bio by remember { mutableStateOf("SecureChat user") }
-
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.Top
-    ) {
-        // Header with avatar
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(24.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Avatar(url = null, name = "John Doe", size = 100)
-                
-                Spacer(modifier = Modifier.padding(16.dp))
-                
-                Text(text = "Edit Profile", fontSize = 24.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-            }
+    val photoPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.uploadAvatar(uri)
         }
-        
-        Divider()
-        
-        // Form Fields
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Edit Profile") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                }
+            )
+        }
+    ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
                 .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            Avatar(
+                url = viewModel.avatarUrl.value,
+                name = viewModel.displayName.value.ifBlank { "User" },
+                size = 100
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally)
+            ) {
+                Button(
+                    onClick = {
+                        photoPicker.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    },
+                    enabled = !viewModel.isUploadingAvatar.value
+                ) {
+                    Text("Change Photo")
+                }
+                OutlinedButton(
+                    onClick = { viewModel.removeAvatar() },
+                    enabled = viewModel.avatarUrl.value != null && !viewModel.isUploadingAvatar.value
+                ) {
+                    Text("Remove")
+                }
+            }
+
+            if (viewModel.isUploadingAvatar.value) {
+                LinearProgressIndicator(
+                    progress = { viewModel.uploadProgress.value / 100f },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text("Uploading… ${viewModel.uploadProgress.value}%", fontSize = 13.sp)
+            }
+
+            Divider()
+
             TextField(
-                value = displayName,
-                onValueChange = { displayName = it },
+                value = viewModel.displayName.value,
+                onValueChange = { viewModel.onDisplayNameChanged(it) },
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("Display Name") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
             )
-            
+
             TextField(
-                value = username,
-                onValueChange = { username = it },
+                value = viewModel.username.value,
+                onValueChange = { viewModel.onUsernameChanged(it) },
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("Username") },
                 singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                leadingIcon = { Text("@", fontSize = 16.sp, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant) }
-            )
-            
-            TextField(
-                value = bio,
-                onValueChange = { bio = it },
-                modifier = Modifier.fillMaxWidth().height(100.dp),
-                label = { Text("Bio") },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done)
-            )
-            
-            Divider()
-            
-            // Avatar Section
-            Text(text = "Profile Picture", fontSize = 18.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium)
-            
-            Avatar(url = null, name = "John Doe", size = 80)
-            
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Button(onClick = { /* Pick image */ }) {
-                    Text("Change Photo")
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                leadingIcon = {
+                    Text(
+                        "@",
+                        fontSize = 16.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
-                OutlinedButton(onClick = { /* Remove photo */ }) {
-                    Text("Remove")
-                }
+            )
+
+            viewModel.errorMessage.value?.let { error ->
+                Text(
+                    text = error,
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.error
+                )
             }
-            
-            Spacer(modifier = Modifier.padding(24.dp))
-            
-            // Save Button
+
+            viewModel.successMessage.value?.let { message ->
+                Text(
+                    text = message,
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
             Button(
-                onClick = onSave,
+                onClick = { viewModel.save(onSaved = onSave) },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = displayName.isNotBlank()
+                enabled = viewModel.displayName.value.isNotBlank() &&
+                    !viewModel.isSaving.value &&
+                    !viewModel.isUploadingAvatar.value
             ) {
-                Text("Save Changes")
+                if (viewModel.isSaving.value) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                } else {
+                    Text("Save Changes")
+                }
             }
         }
     }

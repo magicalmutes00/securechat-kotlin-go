@@ -1,6 +1,8 @@
 package com.securechat.presentation.auth
 
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,13 +11,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
@@ -38,6 +44,16 @@ import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import kotlinx.coroutines.launch
 
+/** Unwraps the Activity from a (possibly wrapped) Compose context. */
+private fun Context.findActivity(): Activity? {
+    var ctx: Context? = this
+    while (ctx is ContextWrapper) {
+        if (ctx is Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
+}
+
 @Composable
 fun AuthScreen(
     onAuthSuccess: () -> Unit,
@@ -47,8 +63,6 @@ fun AuthScreen(
     val phoneViewModel = hiltViewModel<PhoneLoginViewModel>()
     val googleViewModel = hiltViewModel<GoogleLoginViewModel>()
     val scope = rememberCoroutineScope()
-    var phoneNumber by remember { mutableStateOf("") }
-    var isLoading by remember { mutableStateOf(false) }
 
     val googleServerClientId = context.getString(R.string.google_server_client_id)
 
@@ -99,14 +113,15 @@ fun AuthScreen(
                         android.util.Log.e("GoogleAuth", "Google sign-in failed", e)
                         googleViewModel.errorMessage.value = when (e) {
                             is androidx.credentials.exceptions.NoCredentialException ->
-                                "Google sign-in not available. Check that the app's SHA-1 fingerprint is registered."
+                                "No Google account is available. If this is a debug build, make sure its " +
+                                    "SHA-1 is registered and uninstall any older build of this app."
                             is androidx.credentials.exceptions.GetCredentialCancellationException ->
                                 "Google sign-in cancelled."
                             // Play Services errors (e.g. "Developer console is not set up
                             // correctly") carry the actual fix in their message — surface it.
                             is androidx.credentials.exceptions.GetCredentialCustomException ->
                                 "Google sign-in failed: ${e.message ?: "credential provider error"}"
-                            else -> "Google sign-in failed. Please try again."
+                            else -> "Google sign-in failed: ${e.message ?: "please try again"}"
                         }
                     }
                 }
@@ -154,29 +169,48 @@ fun AuthScreen(
 
         Spacer(modifier = Modifier.padding(24.dp))
 
-        TextField(
-            value = phoneNumber,
-            onValueChange = { phoneNumber = it },
+        // Country dial code picker (defaults to India +91) beside the number.
+        Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-            label = { Text("Phone Number (+1 555 123 4567)") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Phone
-            ),
-            enabled = !isLoading
-        )
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CountryCodeDropdown(
+                selected = phoneViewModel.countryCode.value,
+                onSelected = { phoneViewModel.onCountryCodeChanged(it) },
+                enabled = !phoneViewModel.isLoading.value
+            )
+
+            TextField(
+                value = phoneViewModel.phoneNumber.value,
+                onValueChange = { phoneViewModel.onPhoneNumberChanged(it.filter { c -> c.isDigit() }) },
+                modifier = Modifier.weight(1f),
+                label = { Text("Phone number") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                enabled = !phoneViewModel.isLoading.value
+            )
+        }
 
         Spacer(modifier = Modifier.padding(16.dp))
 
         Button(
             onClick = {
-                phoneViewModel.onPhoneNumberChanged(phoneNumber)
+                val activity = context.findActivity()
+                if (activity == null) {
+                    phoneViewModel.errorMessage.value = "Unable to start phone sign-in."
+                    return@Button
+                }
                 phoneViewModel.sendOtp(
-                    onSuccess = { onOtpSent(phoneNumber.trim()) }
+                    activity = activity,
+                    deviceName = DeviceInfo.deviceName(),
+                    deviceIdentifier = DeviceInfo.deviceIdentifier(context),
+                    onCodeSent = { onOtpSent(phoneViewModel.buildE164()) },
+                    onAuthenticated = { onAuthSuccess() }
                 )
             },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-            enabled = phoneNumber.isNotBlank() && !phoneViewModel.isLoading.value
+            enabled = phoneViewModel.phoneNumber.value.isNotBlank() && !phoneViewModel.isLoading.value
         ) {
             if (phoneViewModel.isLoading.value) {
                 CircularProgressIndicator()
@@ -192,6 +226,49 @@ fun AuthScreen(
                 fontSize = 14.sp,
                 color = androidx.compose.material3.MaterialTheme.colorScheme.error
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CountryCodeDropdown(
+    selected: String,
+    onSelected: (String) -> Unit,
+    enabled: Boolean
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selectedCountry = CountryCodes.all.firstOrNull { it.code == selected }
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { if (enabled) expanded = it },
+        modifier = Modifier.width(132.dp)
+    ) {
+        OutlinedTextField(
+            value = selectedCountry?.code ?: selected,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Code") },
+            singleLine = true,
+            enabled = enabled,
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier.menuAnchor().fillMaxWidth()
+        )
+
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            CountryCodes.all.forEach { country ->
+                DropdownMenuItem(
+                    text = { Text("${country.name} (${country.code})") },
+                    onClick = {
+                        onSelected(country.code)
+                        expanded = false
+                    }
+                )
+            }
         }
     }
 }

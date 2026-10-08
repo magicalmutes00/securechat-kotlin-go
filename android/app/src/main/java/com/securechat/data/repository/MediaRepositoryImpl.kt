@@ -210,7 +210,7 @@ class MediaRepositoryImpl @Inject constructor(
     private fun mapToMedia(dto: MediaDto): Media {
         return Media(
             id = dto.id,
-            messageId = dto.message_id,
+            messageId = dto.message_id ?: 0,
             cloudinaryPublicId = dto.cloudinary_public_id,
             resourceType = com.securechat.domain.model.MediaResourceType.valueOf(dto.resource_type.uppercase()),
             secureUrl = dto.secure_url,

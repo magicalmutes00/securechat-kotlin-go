@@ -45,11 +45,17 @@ class UserRepositoryImpl @Inject constructor(
         }
     }
 
-    override suspend fun updateProfile(displayName: String, username: String?): Result<User> {
+    override suspend fun updateProfile(
+        displayName: String,
+        username: String?,
+        profileImageId: Long?,
+        avatarUrl: String?
+    ): Result<User> {
         return withContext(Dispatchers.IO) {
             apiService.updateProfile(com.securechat.data.remote.dto.UpdateProfileRequest(
                 display_name = displayName,
-                username = username
+                username = username,
+                profile_image_id = profileImageId
             )).map { dto ->
                 val user = mapToUser(dto)
                 database.userDao().insert(mapToEntity(user))
@@ -60,13 +66,17 @@ class UserRepositoryImpl @Inject constructor(
 
     override suspend fun updateAvatar(imageId: Long): Result<User> {
         return withContext(Dispatchers.IO) {
-            val entity = database.userDao().getAll().first().firstOrNull()
-            if (entity != null) {
-                val updated = entity.copy(profileImageId = imageId, updatedAt = System.currentTimeMillis())
-                database.userDao().update(updated)
-                Result.success(mapToUser(updated))
-            } else {
-                Result.failure(IllegalStateException("User not found"))
+            val current = database.userDao().getAll().first().firstOrNull()
+            val displayName = current?.displayName ?: return@withContext Result.failure(IllegalStateException("User not found"))
+            val username = current?.username
+            apiService.updateProfile(com.securechat.data.remote.dto.UpdateProfileRequest(
+                display_name = displayName,
+                username = username,
+                profile_image_id = imageId
+            )).map { dto ->
+                val user = mapToUser(dto)
+                database.userDao().insert(mapToEntity(user))
+                user
             }
         }
     }
@@ -136,6 +146,7 @@ class UserRepositoryImpl @Inject constructor(
             username = dto.username,
             displayName = dto.display_name,
             profileImageId = dto.profile_image_id,
+            avatarUrl = dto.avatar_url,
             lastSeen = dto.last_seen,
             isOnline = dto.is_online,
             createdAt = dto.created_at,
@@ -150,6 +161,7 @@ class UserRepositoryImpl @Inject constructor(
             username = entity.username,
             displayName = entity.displayName,
             profileImageId = entity.profileImageId,
+            avatarUrl = entity.avatarUrl,
             lastSeen = entity.lastSeen,
             isOnline = entity.isOnline,
             createdAt = entity.createdAt,
@@ -164,6 +176,7 @@ class UserRepositoryImpl @Inject constructor(
             username = user.username,
             displayName = user.displayName,
             profileImageId = user.profileImageId,
+            avatarUrl = user.avatarUrl,
             lastSeen = user.lastSeen,
             isOnline = user.isOnline,
             createdAt = user.createdAt,

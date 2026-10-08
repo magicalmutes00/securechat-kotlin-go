@@ -23,13 +23,15 @@ import com.securechat.presentation.chat.ChatScreen
 import com.securechat.presentation.contacts.ContactsScreen
 import com.securechat.presentation.home.HomeScreen
 import com.securechat.presentation.home.HomeViewModel
-import com.securechat.presentation.media.DocumentViewerScreen
-import com.securechat.presentation.media.MediaViewerScreen
 import com.securechat.presentation.profile.ProfileScreen
 import com.securechat.presentation.settings.AboutScreen
-import com.securechat.presentation.settings.SettingsScreen
+import com.securechat.presentation.settings.ChatSettingsScreen
+import com.securechat.presentation.settings.LanguageScreen
+import com.securechat.presentation.settings.NotificationsScreen
 import com.securechat.presentation.settings.SessionsScreen
+import com.securechat.presentation.settings.SettingsScreen
 import com.securechat.presentation.settings.StorageScreen
+import com.securechat.presentation.settings.ThemeScreen
 
 @Composable
 fun AppNavHost(
@@ -39,17 +41,21 @@ fun AppNavHost(
     val navController = rememberNavController()
     val mainViewModel = hiltViewModel<MainViewModel>()
     val authState by mainViewModel.authState.collectAsState()
+    val needsProfileSetup by mainViewModel.needsProfileSetup.collectAsState()
 
-    // Gate the whole graph on auth state: signed-in users land on home,
-    // signed-out users on auth, and the unknown state shows a splash.
-    LaunchedEffect(authState) {
+    // Gate the whole graph on auth state. Brand-new accounts (no username yet)
+    // are sent through first-time profile setup before landing on home.
+    LaunchedEffect(authState, needsProfileSetup) {
         val currentRoute = navController.currentBackStackEntry?.destination?.route
         when (authState) {
             is MainViewModel.AuthState.Authenticated -> {
-                if (currentRoute == "splash" || currentRoute == "auth" || currentRoute == "otp") {
-                    navController.navigate("home") {
-                        popUpTo(0) { inclusive = true }
-                    }
+                when {
+                    needsProfileSetup && currentRoute != "profile" ->
+                        navController.navigate("profile") { popUpTo(0) { inclusive = true } }
+
+                    !needsProfileSetup &&
+                        (currentRoute == "splash" || currentRoute == "auth" || currentRoute == "otp") ->
+                        navController.navigate("home") { popUpTo(0) { inclusive = true } }
                 }
             }
             is MainViewModel.AuthState.Unauthenticated -> {
@@ -73,37 +79,31 @@ fun AppNavHost(
         composable("auth") {
             AuthScreen(
                 onAuthSuccess = onAuthSuccess,
-                onOtpSent = { phone ->
-                    val deviceName = android.os.Build.MODEL
-                    navController.navigate("otp?phone=$phone&deviceName=$deviceName") {
+                onOtpSent = { _ ->
+                    navController.navigate("otp") {
                         popUpTo("auth") { inclusive = true }
                     }
                 }
             )
         }
 
-        composable(
-            route = "otp?phone={phone}&deviceName={deviceName}",
-            arguments = listOf(
-                navArgument("phone") { type = NavType.StringType; defaultValue = "" },
-                navArgument("deviceName") { type = NavType.StringType; defaultValue = "" }
-            )
-        ) { entry ->
+        composable("otp") {
             OtpVerifyScreen(
-                phoneNumber = entry.arguments?.getString("phone") ?: "",
-                deviceName = entry.arguments?.getString("deviceName") ?: "",
-                deviceIdentifier = com.securechat.core.utils.DeviceInfo.deviceIdentifier(navController.context),
-                onVerifySuccess = {
-                    navController.navigate("profile") { popUpTo("auth") { inclusive = true } }
-                },
+                onVerifySuccess = onAuthSuccess,
                 onResendOtp = { /* Handled in screen */ }
             )
         }
 
         composable("profile") {
             ProfileSetupScreen(
-                onComplete = { navController.navigate("home") { popUpTo(0) { inclusive = true } } },
-                onSkip = { navController.navigate("home") { popUpTo(0) { inclusive = true } } }
+                onComplete = {
+                    mainViewModel.onProfileSetupHandled()
+                    navController.navigate("home") { popUpTo(0) { inclusive = true } }
+                },
+                onSkip = {
+                    mainViewModel.onProfileSetupHandled()
+                    navController.navigate("home") { popUpTo(0) { inclusive = true } }
+                }
             )
         }
 
@@ -142,14 +142,16 @@ fun AppNavHost(
         ) { entry ->
             val phone = entry.arguments?.getString("phone") ?: ""
             val homeViewModel = hiltViewModel<HomeViewModel>()
-            androidx.compose.runtime.LaunchedEffect(phone) {
+            LaunchedEffect(phone) {
                 if (phone.isNotBlank()) {
                     homeViewModel.createNewConversation(
                         phone,
                         onSuccess = { conversation ->
-                            // Pop this placeholder route so back returns to the list.
+                            val otherName = conversation.getDisplayName(
+                                com.securechat.core.utils.UserSession.currentUserId
+                            )
                             navController.navigate(
-                                "conversation/${conversation.id}?name=${android.net.Uri.encode(conversation.getDisplayName(0))}"
+                                "conversation/${conversation.id}?name=${android.net.Uri.encode(otherName)}"
                             ) {
                                 popUpTo("conversation/new?phone={phone}") { inclusive = true }
                             }
@@ -176,9 +178,17 @@ fun AppNavHost(
 
         composable("settings") {
             SettingsScreen(
+                onBack = { navController.popBackStack() },
+                onProfileClick = { navController.navigate("profile/edit") },
+                onSessionsClick = { navController.navigate("sessions") },
+                onNotificationsClick = { navController.navigate("notifications") },
+                onThemeClick = { navController.navigate("theme") },
+                onChatSettingsClick = { navController.navigate("chat-settings") },
+                onStorageClick = { navController.navigate("storage") },
+                onLanguageClick = { navController.navigate("language") },
+                onAboutClick = { navController.navigate("about") },
                 onLogout = onLogout,
-                onLogoutAll = { /* Handled in screen */ },
-                onBack = { navController.popBackStack() }
+                onLogoutAll = onLogout
             )
         }
 
@@ -189,6 +199,22 @@ fun AppNavHost(
             )
         }
 
+        composable("notifications") {
+            NotificationsScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable("theme") {
+            ThemeScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable("chat-settings") {
+            ChatSettingsScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable("language") {
+            LanguageScreen(onBack = { navController.popBackStack() })
+        }
+
         composable("storage") {
             StorageScreen(
                 onBack = { navController.popBackStack() }
@@ -197,8 +223,7 @@ fun AppNavHost(
 
         composable("sessions") {
             SessionsScreen(
-                onBack = { navController.popBackStack() },
-                onRevokeDevice = { deviceId -> /* Handle revoke */ }
+                onBack = { navController.popBackStack() }
             )
         }
 
@@ -211,14 +236,10 @@ fun AppNavHost(
         composable(
             route = "media/viewer",
             arguments = listOf(
-                navArgument("media") { type = NavType.StringType } // JSON serialized media
+                navArgument("media") { type = NavType.StringType }
             )
         ) {
-            // MediaViewerScreen(
-            //     media = parseMedia(getString("media")),
-            //     onClose = { navController.popBackStack() },
-            //     onDownload = { /* Handle download */ }
-            // )
+            // Media viewer is not yet wired up.
         }
 
         composable(
@@ -227,12 +248,7 @@ fun AppNavHost(
                 navArgument("media") { type = NavType.StringType }
             )
         ) {
-            // DocumentViewerScreen(
-            //     media = parseMedia(getString("media")),
-            //     onClose = { navController.popBackStack() },
-            //     onDownload = { /* Handle download */ },
-            //     onShare = { /* Handle share */ }
-            // )
+            // Document viewer is not yet wired up.
         }
     }
 }

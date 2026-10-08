@@ -62,6 +62,13 @@ data class GoogleSignInRequest(
 )
 
 @Serializable
+data class FirebaseSignInRequest(
+    val id_token: String,
+    val device_name: String,
+    val device_identifier: String
+)
+
+@Serializable
 data class RefreshTokenRequest(
     val refresh_token: String
 )
@@ -87,6 +94,7 @@ data class UserDto(
     val username: String? = null,
     val display_name: String = "",
     val profile_image_id: Long? = null,
+    val avatar_url: String? = null,
     val last_seen: Long? = null,
     val is_online: Boolean = false,
     val created_at: Long = 0,
@@ -96,7 +104,8 @@ data class UserDto(
 @Serializable
 data class UpdateProfileRequest(
     val display_name: String,
-    val username: String?
+    val username: String? = null,
+    val profile_image_id: Long? = null
 )
 
 @Serializable
@@ -180,7 +189,9 @@ data class MessagePageDto(
 @Serializable
 data class MediaDto(
     val id: Long,
-    val message_id: Long,
+    // Avatar media has no message_id yet (server returns it null via omitempty);
+    // message-attached media links it afterwards. Nullable so both decode.
+    val message_id: Long? = null,
     val cloudinary_public_id: String,
     val resource_type: String,
     val secure_url: String,

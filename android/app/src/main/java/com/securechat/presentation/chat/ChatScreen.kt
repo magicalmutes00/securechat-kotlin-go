@@ -112,10 +112,13 @@ fun ChatScreen(
         
         Spacer(modifier = Modifier.padding(8.dp))
 
-        // Message List
+        // Message List — weight(1f) so the list takes only the space left
+        // after the input row below; fillMaxSize would consume the column's
+        // remaining height and push MessageInput off-screen entirely.
         LazyColumn(
             modifier = Modifier
-                .fillMaxSize()
+                .weight(1f)
+                .fillMaxWidth()
                 .padding(horizontal = 16.dp),
             reverseLayout = true,
             contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 16.dp),
