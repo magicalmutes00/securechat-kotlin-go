@@ -109,7 +109,7 @@ func (r *Repository) Search(ctx context.Context, query string, limit int) ([]*Us
 		       m.secure_url, u.last_seen, u.is_online, u.created_at, u.updated_at
 		FROM users u
 		LEFT JOIN media m ON m.id = u.profile_image_id
-		WHERE u.username LIKE $1 OR u.display_name LIKE $2 OR u.phone_number LIKE $3
+		WHERE u.username ILIKE $1 OR u.display_name ILIKE $2 OR u.phone_number ILIKE $3
 		LIMIT $4
 	`, pattern, pattern, pattern, limit)
 	if err != nil {

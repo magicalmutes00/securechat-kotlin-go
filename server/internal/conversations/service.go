@@ -40,15 +40,19 @@ func (s *Service) GetConversation(ctx context.Context, conversationID, userID in
 	return s.repo.GetWithParticipants(ctx, conversationID, userID)
 }
 
-func (s *Service) CreateDirectConversation(ctx context.Context, userID int64, otherUserPhone string) (*ConversationWithParticipants, error) {
-	// Find other user by phone
-	var otherUserID int64
-	err := s.repo.db.QueryRowContext(ctx, `SELECT id FROM users WHERE phone_number = $1`, otherUserPhone).Scan(&otherUserID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, apperrors.ErrUserNotFound
+// CreateDirectConversation starts (or reuses) a 1:1 conversation. The other
+// participant is identified either by otherUserID (preferred) or, when that is
+// zero, resolved from otherUserPhone.
+func (s *Service) CreateDirectConversation(ctx context.Context, userID int64, otherUserPhone string, otherUserID int64) (*ConversationWithParticipants, error) {
+	// Find other user by phone when no id was supplied.
+	if otherUserID == 0 {
+		err := s.repo.db.QueryRowContext(ctx, `SELECT id FROM users WHERE phone_number = $1`, otherUserPhone).Scan(&otherUserID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, apperrors.ErrUserNotFound
+			}
+			return nil, fmt.Errorf("failed to find user: %w", err)
 		}
-		return nil, fmt.Errorf("failed to find user: %w", err)
 	}
 
 	if otherUserID == userID {

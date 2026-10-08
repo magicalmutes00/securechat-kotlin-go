@@ -28,8 +28,12 @@ func RegisterRoutes(api fiber.Router, db *sql.DB, tokenManager *auth.TokenManage
 	conversations.Delete("/:id", handler.DeleteConversation)
 }
 
+// A conversation can be started either from a phone number (legacy, e164) or
+// from a user id. User id is preferred by clients that found the person through
+// search, since search deliberately never exposes phone numbers.
 type CreateConversationRequest struct {
-	ParticipantPhone string `json:"participant_phone" validate:"required,e164"`
+	ParticipantPhone string `json:"participant_phone"`
+	ParticipantID    int64  `json:"participant_id"`
 }
 
 type ConversationResponse struct {
@@ -94,7 +98,11 @@ func (h *Handler) CreateConversation(c *fiber.Ctx) error {
 		return c.Status(400).JSON(apperrors.NewErrorResponse(apperrors.ErrInvalidRequest))
 	}
 
-	conversation, err := h.service.CreateDirectConversation(c.Context(), userID, req.ParticipantPhone)
+	if req.ParticipantID == 0 && req.ParticipantPhone == "" {
+		return c.Status(400).JSON(apperrors.NewErrorResponse(apperrors.ErrInvalidRequest))
+	}
+
+	conversation, err := h.service.CreateDirectConversation(c.Context(), userID, req.ParticipantPhone, req.ParticipantID)
 	if err != nil {
 		var appErr *apperrors.AppError
 		if errors.As(err, &appErr) {
