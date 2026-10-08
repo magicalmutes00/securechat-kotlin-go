@@ -135,25 +135,29 @@ fun AppNavHost(
         }
 
         composable(
-            route = "conversation/new?phone={phone}",
+            route = "conversation/new?userId={userId}&name={name}",
             arguments = listOf(
-                navArgument("phone") { type = NavType.StringType; defaultValue = "" }
+                navArgument("userId") { type = NavType.LongType; defaultValue = 0L },
+                navArgument("name") { type = NavType.StringType; defaultValue = "" }
             )
         ) { entry ->
-            val phone = entry.arguments?.getString("phone") ?: ""
+            val userId = entry.arguments?.getLong("userId") ?: 0L
+            val name = entry.arguments?.getString("name") ?: ""
             val homeViewModel = hiltViewModel<HomeViewModel>()
-            LaunchedEffect(phone) {
-                if (phone.isNotBlank()) {
-                    homeViewModel.createNewConversation(
-                        phone,
+            LaunchedEffect(userId) {
+                if (userId > 0L) {
+                    homeViewModel.createNewConversationWithUser(
+                        userId,
                         onSuccess = { conversation ->
-                            val otherName = conversation.getDisplayName(
-                                com.securechat.core.utils.UserSession.currentUserId
-                            )
+                            val otherName = name.ifBlank {
+                                conversation.getDisplayName(
+                                    com.securechat.core.utils.UserSession.currentUserId
+                                )
+                            }
                             navController.navigate(
                                 "conversation/${conversation.id}?name=${android.net.Uri.encode(otherName)}"
                             ) {
-                                popUpTo("conversation/new?phone={phone}") { inclusive = true }
+                                popUpTo("conversation/new?userId={userId}&name={name}") { inclusive = true }
                             }
                         },
                         onFailure = { navController.popBackStack() }
@@ -169,8 +173,10 @@ fun AppNavHost(
 
         composable("contacts") {
             ContactsScreen(
-                onContactClick = { phone ->
-                    navController.navigate("conversation/new?phone=$phone")
+                onContactClick = { userId, name ->
+                    navController.navigate(
+                        "conversation/new?userId=$userId&name=${android.net.Uri.encode(name)}"
+                    )
                 },
                 onBack = { navController.popBackStack() }
             )

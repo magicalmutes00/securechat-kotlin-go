@@ -70,6 +70,17 @@ class ConversationRepositoryImpl @Inject constructor(
         }
     }
 
+    override suspend fun createDirectConversationWithUser(userId: Long): Result<Conversation> {
+        return withContext(Dispatchers.IO) {
+            apiService.createConversation(com.securechat.data.remote.dto.CreateConversationRequest(participant_id = userId))
+                .map { dto ->
+                    val conversation = mapToConversation(dto)
+                    saveConversation(conversation)
+                    conversation
+                }
+        }
+    }
+
     override suspend fun deleteConversation(conversationId: Long): Result<Unit> {
         return withContext(Dispatchers.IO) {
             apiService.deleteConversation(conversationId)

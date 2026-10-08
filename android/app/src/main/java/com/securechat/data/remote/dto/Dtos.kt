@@ -154,7 +154,8 @@ data class MessagePreviewDto(
 
 @Serializable
 data class CreateConversationRequest(
-    val participant_phone: String
+    val participant_phone: String? = null,
+    val participant_id: Long? = null
 )
 
 // Message DTOs

@@ -8,6 +8,7 @@ interface ConversationRepository {
     suspend fun getConversations(): Result<List<Conversation>>
     suspend fun getConversation(conversationId: Long): Result<Conversation>
     suspend fun createDirectConversation(participantPhone: String): Result<Conversation>
+    suspend fun createDirectConversationWithUser(userId: Long): Result<Conversation>
     suspend fun deleteConversation(conversationId: Long): Result<Unit>
     
     fun observeConversations(): Flow<List<Conversation>>

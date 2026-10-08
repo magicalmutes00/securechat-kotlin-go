@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessTime
@@ -138,7 +139,10 @@ fun ChatScreen(
         MessageInput(
             text = messageText,
             onTextChange = { messageText = it },
-            onSend = { viewModel.sendTextMessage(it) },
+            onSend = {
+                viewModel.sendTextMessage(it)
+                messageText = ""
+            },
             onAttach = { /* Show attachment picker */ }
         )
     }
@@ -345,11 +349,14 @@ fun MessageInput(
                 value = text,
                 onValueChange = onTextChange,
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .weight(1f)
                     .padding(horizontal = 8.dp),
                 placeholder = { Text("Message") },
                 singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send)
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(
+                    onSend = { if (text.isNotBlank()) onSend(text) }
+                )
             )
             
             if (text.isNotBlank()) {
