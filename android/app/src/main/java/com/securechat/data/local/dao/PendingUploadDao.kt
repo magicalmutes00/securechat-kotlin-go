@@ -31,6 +31,9 @@ interface PendingUploadDao {
     @Query("SELECT * FROM pending_uploads ORDER BY createdAt DESC")
     fun getAll(): Flow<List<PendingUploadEntity>>
 
+    @Query("SELECT COUNT(*) FROM pending_uploads WHERE status IN ('pending', 'uploading')")
+    suspend fun countOutstanding(): Int
+
     @Query("DELETE FROM pending_uploads WHERE id = :id")
     suspend fun deleteById(id: String): Int
 

@@ -132,8 +132,10 @@ class ProfileViewModel @Inject constructor(
                     )
                 ).getOrThrow()
 
-                val media = completed.media
-                    ?: throw IllegalStateException("Upload did not return media")
+                // completeUpload now returns the media record itself; this used
+                // to read `completed.media` off a synthetic message the mapping
+                // invented because the endpoint's real return type was ignored.
+                val media = completed
 
                 avatarMediaId.value = media.id
                 avatarUrl.value = media.secureUrl

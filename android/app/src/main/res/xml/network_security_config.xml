@@ -1,24 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Release network policy: HTTPS/WSS only.
+
+  <domain> entries match hostnames and hostname suffixes — never IP ranges or
+  CIDR blocks. The previous version listed 10.0.0.0/8, 192.168.0.0/16 and
+  172.16.0.0/12 here, which the platform silently ignores, giving a false sense
+  that LAN development was configured. Cleartext exceptions for local
+  development now live in src/debug/res/xml/, so they cannot reach a release
+  build at all.
+-->
 <network-security-config>
-    <domain-config cleartextTrafficPermitted="true">
-        <!-- Development: allow cleartext for LAN IPs -->
-        <domain includeSubdomains="true">10.0.2.2</domain>
-        <domain includeSubdomains="true">10.0.0.0/8</domain>
-        <domain includeSubdomains="true">192.168.0.0/16</domain>
-        <domain includeSubdomains="true">172.16.0.0/12</domain>
-        <domain includeSubdomains="true">localhost</domain>
-    </domain-config>
-
-    <domain-config cleartextTrafficPermitted="false">
-        <!-- Production: enforce HTTPS -->
-        <domain includeSubdomains="true">securechat-api.onrender.com</domain>
-        <domain includeSubdomains="true">api.securechat.app</domain>
-        <domain includeSubdomains="true">securechat.app</domain>
-    </domain-config>
-
     <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
     </base-config>
+
+    <!-- Stated explicitly so an accidental base-config change cannot silently
+         downgrade production traffic. -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">securechat-api.onrender.com</domain>
+        <domain includeSubdomains="true">api.securechat.app</domain>
+        <domain includeSubdomains="true">securechat.app</domain>
+        <domain includeSubdomains="true">res.cloudinary.com</domain>
+    </domain-config>
 </network-security-config>

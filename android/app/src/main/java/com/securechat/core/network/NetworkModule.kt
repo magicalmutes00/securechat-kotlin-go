@@ -33,7 +33,13 @@ class NetworkModule {
                 json(Json { ignoreUnknownKeys = true })
             }
 
-            install(WebSockets)
+            // Application-level pings so a half-open socket (NAT rebind, radio
+            // drop) is detected rather than looking connected forever. The
+            // server also pings every 30s, but only the client can notice that
+            // its own sends have stopped landing.
+            install(WebSockets) {
+                pingIntervalMillis = 20_000
+            }
 
             install(Logging) {
                 logger = object : Logger {

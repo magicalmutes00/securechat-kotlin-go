@@ -24,6 +24,7 @@ class MainViewModel @Inject constructor(
     private val tokenStorage: TokenStorage,
     private val authRepository: AuthRepository,
     private val userRepository: UserRepository,
+    private val e2eeRepository: com.securechat.domain.repository.E2eeRepository,
     private val webSocketManager: WebSocketManager,
     private val webSocketEventProcessor: WebSocketEventProcessor
 ) : ViewModel() {
@@ -55,6 +56,12 @@ class MainViewModel @Inject constructor(
             authState.collect { state ->
                 when (state) {
                     is AuthState.Authenticated -> {
+                        // Publish this device's Signal Protocol keys before the
+                        // realtime channel opens: a peer that wants to start a
+                        // session needs them, and publishing is idempotent.
+                        e2eeRepository.ensureRegistered().onFailure { error ->
+                            android.util.Log.w("MainViewModel", "E2EE key publish failed", error)
+                        }
                         // Keep the realtime channel alive and apply incoming
                         // events to the local cache for as long as we're signed in.
                         webSocketManager.start()
@@ -124,24 +131,43 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Resolves the signed-in identity, or signs the user out.
+     *
+     * This used to fall back to a fabricated `User(id = 0, phoneNumber = "")`
+     * while still reporting [AuthState.Authenticated]. Everything downstream —
+     * "is this message mine", read receipts, avatar lookups — trusted that
+     * identity, so a failed profile fetch produced a signed-in shell that was
+     * quietly wrong. A failed fetch now means "no usable session": rotate the
+     * token once and retry, then sign out.
+     */
     private suspend fun loadUserOrDefault() {
         val result = authRepository.getCurrentUser()
-        _authState.value = AuthState.Authenticated(
-            result.getOrElse {
-                User(
-                    id = 0,
-                    phoneNumber = "",
-                    username = null,
-                    displayName = "User",
-                    profileImageId = null,
-                    lastSeen = null,
-                    isOnline = true,
-                    createdAt = System.currentTimeMillis(),
-                    updatedAt = System.currentTimeMillis()
-                )
+        result.onSuccess { user ->
+            _needsProfileSetup.value = user.username == null
+            _authState.value = AuthState.Authenticated(user)
+            com.securechat.core.utils.UserSession.update(user.id, user.displayName)
+        }.onFailure {
+            // Tokens may have expired while the app was backgrounded; a single
+            // rotation is worth trying before giving up on the session.
+            val refreshed = authRepository.refreshToken()
+            if (refreshed.isSuccess) {
+                authRepository.getCurrentUser()
+                    .onSuccess { user ->
+                        _needsProfileSetup.value = user.username == null
+                        _authState.value = AuthState.Authenticated(user)
+                        com.securechat.core.utils.UserSession.update(user.id, user.displayName)
+                    }
+                    .onFailure { signOut() }
+            } else {
+                signOut()
             }
-        )
-        val user = (_authState.value as AuthState.Authenticated).user
-        com.securechat.core.utils.UserSession.update(user.id, user.displayName)
+        }
+    }
+
+    private suspend fun signOut() {
+        authRepository.logout()
+        com.securechat.core.utils.UserSession.clear()
+        _authState.value = AuthState.Unauthenticated
     }
 }

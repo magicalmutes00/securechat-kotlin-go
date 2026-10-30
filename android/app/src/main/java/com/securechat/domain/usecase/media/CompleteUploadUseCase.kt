@@ -1,7 +1,7 @@
-﻿package com.securechat.domain.usecase.media
+package com.securechat.domain.usecase.media
 
 import com.securechat.core.common.Result
-import com.securechat.domain.model.Message
+import com.securechat.domain.model.Media
 import com.securechat.domain.repository.MediaRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -9,7 +9,7 @@ import kotlinx.coroutines.withContext
 class CompleteUploadUseCase @javax.inject.Inject constructor(
     private val mediaRepository: MediaRepository
 ) {
-    suspend operator fun invoke(request: MediaRepository.CompleteUploadRequest): Result<Message> {
+    suspend operator fun invoke(request: MediaRepository.CompleteUploadRequest): Result<Media> {
         return withContext(Dispatchers.IO) {
             if (request.conversationId <= 0) {
                 Result.failure(IllegalArgumentException("Invalid conversation ID"))

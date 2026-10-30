@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Paths exposed through FileProvider for sharing and "open with" from the media
+  and document viewers. Only the downloads cache is shared: granting another app
+  a content Uri must never expose the database, the outgoing-attachment staging
+  area, or anything else under the app's private storage.
+-->
+<paths>
+    <cache-path name="downloads" path="downloads/" />
+</paths>

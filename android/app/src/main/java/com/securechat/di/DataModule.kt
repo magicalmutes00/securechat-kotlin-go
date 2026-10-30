@@ -5,6 +5,7 @@ import androidx.room.Room
 import com.securechat.R
 import com.securechat.core.media.CloudinaryUploadHelper
 import com.securechat.core.network.NetworkModule
+import com.securechat.core.security.E2eeKeyManager
 import com.securechat.core.security.TokenStorage
 import com.securechat.data.local.database.SecureChatDatabase
 import com.securechat.data.local.dao.*
@@ -125,6 +126,13 @@ object DataModule {
     // Repositories
     @Provides
     @Singleton
+    fun provideE2eeRepository(
+        apiService: ApiService,
+        keyManager: E2eeKeyManager
+    ): E2eeRepository = E2eeRepositoryImpl(apiService, keyManager)
+
+    @Provides
+    @Singleton
     fun provideAuthRepository(
         apiService: ApiService,
         tokenStorage: TokenStorage,
@@ -148,8 +156,11 @@ object DataModule {
         database: SecureChatDatabase,
         messageDao: MessageDao,
         mediaDao: MediaDao,
-        webSocketManager: WebSocketManager
-    ): MessageRepository = MessageRepositoryImpl(apiService, database, messageDao, mediaDao, webSocketManager)
+        webSocketManager: WebSocketManager,
+        operationQueue: com.securechat.data.sync.PendingOperationQueue
+    ): MessageRepository = MessageRepositoryImpl(
+        apiService, database, messageDao, mediaDao, webSocketManager, operationQueue
+    )
 
     @Provides
     @Singleton
@@ -180,12 +191,16 @@ object DataModule {
     @Provides
     @Singleton
     fun provideSyncRepository(
-        database: SecureChatDatabase,
         messageDao: MessageDao,
         pendingUploadDao: PendingUploadDao,
-        pendingOperationDao: PendingOperationDao,
-        webSocketManager: WebSocketManager
-    ): SyncRepository = SyncRepositoryImpl(database, messageDao, pendingUploadDao, pendingOperationDao, webSocketManager)
+        mediaSendQueue: com.securechat.data.sync.MediaSendQueue,
+        mediaMessageSender: com.securechat.data.sync.MediaMessageSender,
+        operationQueue: com.securechat.data.sync.PendingOperationQueue,
+        webSocketManager: WebSocketManager,
+        apiService: ApiService
+    ): SyncRepository = SyncRepositoryImpl(
+        messageDao, pendingUploadDao, mediaSendQueue, mediaMessageSender, operationQueue, webSocketManager, apiService
+    )
 
     @Provides
     @Singleton

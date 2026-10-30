@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -48,6 +49,9 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // Required by libsignal-android: it uses java.time and other APIs that
+        // need back-porting below the minSdk level it declares.
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlin {
@@ -63,15 +67,41 @@ android {
         }
     }
 
+    // Signing material is read from android/keystore.properties, which is
+    // gitignored. Keeping passwords out of this file means a repository leak
+    // cannot hand over a publishable signing identity.
+    val keystorePropertiesFile = rootProject.file("keystore.properties")
+    val keystoreProperties = Properties().apply {
+        if (keystorePropertiesFile.exists()) {
+            keystorePropertiesFile.inputStream().use { load(it) }
+        }
+    }
+    val hasReleaseKeystore = keystorePropertiesFile.exists() &&
+        keystoreProperties.getProperty("storeFile") != null
+
     signingConfigs {
-        // Project-specific signing identity (outside the repo, at
-        // ~/.android/securechat.keystore). storePassword is a local debug
-        // convenience, not a production secret — do not reuse for Play.
+        // Local debug convenience keystore, generated outside the repo at
+        // ~/.android/securechat.keystore. Its password is deliberately trivial
+        // because it only ever signs local debug builds — it must never be
+        // promoted to a release identity.
         create("securechat") {
             storeFile = file("${System.getProperty("user.home")}/.android/securechat.keystore")
-            storePassword = "securechat"
-            keyAlias = "securechat"
-            keyPassword = "securechat"
+            storePassword = keystoreProperties.getProperty("debugStorePassword") ?: "securechat"
+            keyAlias = keystoreProperties.getProperty("debugKeyAlias") ?: "securechat"
+            keyPassword = keystoreProperties.getProperty("debugKeyPassword") ?: "securechat"
+        }
+
+        // Real release identity. Absent keystore.properties the release variant
+        // stays unsigned on purpose: previously `release` had no signingConfig
+        // at all, so the documented `bundleRelease` step silently produced an
+        // unsigned AAB that could not be uploaded.
+        create("release") {
+            if (hasReleaseKeystore) {
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
         }
     }
 
@@ -95,6 +125,9 @@ android {
                 "proguard-rules.pro"
             )
             matchingFallbacks += "debug"
+            if (hasReleaseKeystore) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
@@ -166,6 +199,13 @@ dependencies {
     // Security
     implementation(libs.androidx.security.crypto)
     implementation(libs.androidx.biometric)
+
+    // Signal Protocol (E2EE phase E1+: key generation and the session ratchet).
+    // Official library, so the crypto is Signal's own rather than a port.
+    implementation(libs.libsignal.android)
+
+    // Back-ports the Java APIs libsignal uses onto older Android releases.
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
 
     // Testing
     testImplementation(libs.junit)

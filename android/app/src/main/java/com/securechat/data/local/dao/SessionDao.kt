@@ -8,6 +8,14 @@ import androidx.room.Update
 import com.securechat.data.local.entity.SessionEntity
 import kotlinx.coroutines.flow.Flow
 
+/**
+ * Refresh-token sessions, mirroring the server's `sessions` table.
+ *
+ * This interface used to be a duplicate of the Signal-protocol session DAO: every
+ * query targeted a `signal_sessions` table that was never created, while the
+ * entity returned was the auth-session row. Room rejected the whole schema at
+ * build time, and nothing could have used it if it had compiled.
+ */
 @Dao
 interface SessionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -20,19 +28,26 @@ interface SessionDao {
     suspend fun update(session: SessionEntity): Int
 
     @Query("SELECT * FROM sessions WHERE id = :id")
-    fun getById(id: Long): Flow<SessionEntity?>
+    suspend fun getById(id: Long): SessionEntity?
 
     @Query("SELECT * FROM sessions WHERE serverId = :serverId")
-    fun getByServerId(serverId: Long): Flow<SessionEntity?>
+    suspend fun getByServerId(serverId: Long): SessionEntity?
 
+    @Query("SELECT * FROM sessions WHERE userId = :userId ORDER BY createdAt DESC")
+    fun getByUserId(userId: Long): Flow<List<SessionEntity>>
+
+    /** Sessions that are neither revoked nor expired, newest first. */
     @Query("SELECT * FROM sessions WHERE userId = :userId AND revokedAt IS NULL AND expiresAt > :now ORDER BY createdAt DESC")
-    fun getActiveByUserId(userId: Long, now: Long): Flow<List<SessionEntity>>
-
-    @Query("SELECT * FROM sessions WHERE deviceId = :deviceId AND revokedAt IS NULL ORDER BY createdAt DESC")
-    fun getActiveByDeviceId(deviceId: Long): Flow<List<SessionEntity>>
+    suspend fun getActiveForUser(userId: Long, now: Long): List<SessionEntity>
 
     @Query("SELECT * FROM sessions ORDER BY createdAt DESC")
     fun getAll(): Flow<List<SessionEntity>>
+
+    @Query("UPDATE sessions SET revokedAt = :revokedAt WHERE id = :id")
+    suspend fun revoke(id: Long, revokedAt: Long): Int
+
+    @Query("UPDATE sessions SET revokedAt = :revokedAt WHERE userId = :userId AND revokedAt IS NULL")
+    suspend fun revokeAllForUser(userId: Long, revokedAt: Long): Int
 
     @Query("DELETE FROM sessions WHERE id = :id")
     suspend fun deleteById(id: Long): Int

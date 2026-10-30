@@ -25,6 +25,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.ChatBubbleOutline
+import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -47,6 +48,7 @@ import com.securechat.presentation.theme.Theme
 fun HomeScreen(
     onLogout: () -> Unit,
     onNewChat: () -> Unit,
+    onNewGroup: () -> Unit,
     onSettings: () -> Unit,
     onConversationClick: (conversationId: Long, otherUserName: String) -> Unit
 ) {
@@ -88,6 +90,12 @@ fun HomeScreen(
                         Icon(
                             imageVector = androidx.compose.material.icons.Icons.Default.Chat,
                             contentDescription = "New Chat"
+                        )
+                    }
+                    IconButton(onClick = onNewGroup) {
+                        Icon(
+                            imageVector = Icons.Default.GroupAdd,
+                            contentDescription = "New Group"
                         )
                     }
 
@@ -173,16 +181,25 @@ fun ConversationItem(
             )
         },
         supportingContent = {
-            // Last message preview
+            // Last message preview. In a group the row is prefixed with the
+            // author's name, so three people saying "ok" are distinguishable.
             conversation.lastMessage?.let { msg ->
+                val body = when (msg.type) {
+                    com.securechat.domain.model.MessageType.TEXT -> msg.text ?: ""
+                    com.securechat.domain.model.MessageType.IMAGE -> "📷 Image"
+                    com.securechat.domain.model.MessageType.VIDEO -> "🎥 Video"
+                    com.securechat.domain.model.MessageType.AUDIO -> "🎵 Audio"
+                    com.securechat.domain.model.MessageType.DOCUMENT -> "📄 Document"
+                }
+                val isOwn = msg.senderId == currentUserId
+                val prefix = when {
+                    conversation.type != com.securechat.domain.model.ConversationType.GROUP -> ""
+                    isOwn -> "You: "
+                    msg.senderName.isNullOrBlank() -> ""
+                    else -> "${msg.senderName}: "
+                }
                 Text(
-                    text = when (msg.type) {
-                        com.securechat.domain.model.MessageType.TEXT -> msg.text ?: ""
-                        com.securechat.domain.model.MessageType.IMAGE -> "📷 Image"
-                        com.securechat.domain.model.MessageType.VIDEO -> "🎥 Video"
-                        com.securechat.domain.model.MessageType.AUDIO -> "🎵 Audio"
-                        com.securechat.domain.model.MessageType.DOCUMENT -> "📄 Document"
-                    },
+                    text = "$prefix$body",
                     fontSize = 14.sp,
                     color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,

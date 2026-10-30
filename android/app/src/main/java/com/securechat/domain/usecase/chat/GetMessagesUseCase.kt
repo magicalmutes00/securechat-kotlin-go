@@ -1,4 +1,4 @@
-﻿package com.securechat.domain.usecase.chat
+package com.securechat.domain.usecase.chat
 
 import com.securechat.core.common.Result
 import com.securechat.domain.model.Message
@@ -12,7 +12,7 @@ class GetMessagesUseCase @javax.inject.Inject constructor(
     suspend operator fun invoke(
         conversationId: Long,
         limit: Int = 30,
-        cursor: Long? = null
+        cursor: String? = null
     ): Result<MessageRepository.MessagePage> {
         return withContext(Dispatchers.IO) {
             if (conversationId <= 0) {

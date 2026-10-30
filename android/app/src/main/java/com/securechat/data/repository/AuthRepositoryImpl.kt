@@ -114,6 +114,8 @@ class AuthRepositoryImpl @Inject constructor(
                 updatedAt = response.user.updated_at
             )
             database.userDao().insert(userEntity)
+            // Record who these tokens belong to so the cache can be scoped.
+            tokenStorage.saveUserId(response.user.id)
 
             val user = mapToUser(response.user)
             _currentUser.value = user
@@ -180,17 +182,26 @@ class AuthRepositoryImpl @Inject constructor(
 
     override suspend fun getCurrentUser(): Result<User> {
         return withContext(Dispatchers.IO) {
-            // Try local first
-            val entity = database.userDao().getAll().first().firstOrNull()
-            if (entity != null) {
-                return@withContext Result.success(mapToUser(entity))
+            // Scope the cache to the session we actually hold. The previous
+            // version returned the first row in the users table, so after an
+            // account switch the app kept reporting the *previous* account as
+            // the current user and never consulted the server at all.
+            val sessionUserId = tokenStorage.getUserId()
+            val cached = sessionUserId
+                ?.let { userDao.getByServerId(it).first() }
+                ?.let { mapToUser(it) }
+
+            if (cached != null) {
+                _currentUser.value = cached
+                return@withContext Result.success(cached)
             }
-            
-            // Fallback to API
+
+            // No trustworthy local copy: ask the server and record the owner.
             apiService.getCurrentUser()
                 .map { dto ->
                     val user = mapToUser(dto)
-                    database.userDao().insert(mapToEntity(user))
+                    userDao.insert(mapToEntity(user))
+                    tokenStorage.saveUserId(user.id)
                     _currentUser.value = user
                     user
                 }

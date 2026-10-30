@@ -3,25 +3,36 @@ package com.securechat.core.media
 import android.content.Context
 import com.securechat.core.common.Result
 import com.securechat.domain.repository.MediaRepository
-import io.ktor.client.HttpClient
-import io.ktor.client.call.body
-import io.ktor.client.engine.android.Android
-import io.ktor.client.request.get
-import io.ktor.http.HttpHeaders
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import okhttp3.Call
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
-import okhttp3.RequestBody.Companion.asRequestBody
+import okio.BufferedSink
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.IOException
+import java.util.Collections
+import java.util.concurrent.TimeUnit
 
-class CloudinaryUploadHelper(private val context: Context) {
-
-    private val okHttpClient = OkHttpClient()
-    private val client = HttpClient(Android)
+/**
+ * Uploads to, and downloads from, Cloudinary directly using the signed upload
+ * parameters issued by the backend — the API secret never reaches the client.
+ *
+ * Both directions stream in fixed-size chunks. The previous implementation
+ * buffered the entire file into an okio [okio.Buffer] before its single write
+ * and read a download into a [ByteArray], so a video near the configured 500 MB
+ * limit allocated its whole size on the heap and died with an OOM. Progress is
+ * now emitted as bytes actually leave (or arrive at) the device, which also
+ * makes the progress UI mean something: it used to fire once, at 100%.
+ *
+ * In-flight requests are tracked so [cancel] can abort them for real. Closing
+ * the progress channel, as `cancelUpload` did before, only stopped updates and
+ * left the transfer running to completion.
+ */
+class CloudinaryUploadHelper(@Suppress("UNUSED_PARAMETER") private val context: Context) {
 
     data class CloudinaryUploadResult(
         val publicId: String,
@@ -33,6 +44,29 @@ class CloudinaryUploadHelper(private val context: Context) {
         val bytes: Long
     )
 
+    private val okHttpClient = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(5, TimeUnit.MINUTES)
+        .readTimeout(5, TimeUnit.MINUTES)
+        .build()
+
+    /** Live requests keyed by the caller's upload id, for cancellation. */
+    private val activeCalls = Collections.synchronizedMap(mutableMapOf<String, Call>())
+
+    /**
+     * Aborts the in-flight request registered under [uploadId].
+     * @return true if a transfer was actually cancelled.
+     */
+    fun cancel(uploadId: String): Boolean {
+        val call = activeCalls.remove(uploadId) ?: return false
+        call.cancel()
+        return true
+    }
+
+    /**
+     * Streams [filePath] to Cloudinary as a signed multipart upload, reporting
+     * progress as bytes are written to the socket.
+     */
     suspend fun uploadFile(
         uploadUrl: String,
         publicId: String,
@@ -40,87 +74,163 @@ class CloudinaryUploadHelper(private val context: Context) {
         timestamp: Long,
         apiKey: String,
         filePath: String,
+        uploadId: String? = null,
         progressListener: (bytesTransferred: Long, totalBytes: Long) -> Unit
     ): Result<CloudinaryUploadResult> {
         return withContext(Dispatchers.IO) {
             Result.runCatching {
                 val file = File(filePath)
                 val totalBytes = file.length()
-
                 if (totalBytes == 0L) {
                     throw IllegalArgumentException("File is empty")
                 }
 
-                // Create multipart request with progress tracking
-                val filePart = createProgressRequestBody(file, progressListener, totalBytes)
                 val multipart = MultipartBody.Builder()
                     .setType(MultipartBody.FORM)
                     .addFormDataPart("api_key", apiKey)
                     .addFormDataPart("timestamp", timestamp.toString())
                     .addFormDataPart("signature", signature)
                     .addFormDataPart("public_id", publicId)
-                    .addFormDataPart("folder", "securechat")
-                    .addPart(filePart)
+                    // folder must match the folder the backend signed; a
+                    // mismatch makes Cloudinary reject the signature.
+                    .addFormDataPart("folder", publicId.substringBeforeLast("/", missingDelimiterValue = "securechat"))
+                    .addPart(MultipartBody.Part.createFormData("file", file.name, progressRequestBody(file, totalBytes, progressListener)))
                     .build()
 
-                val request = Request.Builder()
-                    .url(uploadUrl)
-                    .post(multipart)
-                    .build()
+                val request = Request.Builder().url(uploadUrl).post(multipart).build()
+                val call = okHttpClient.newCall(request)
+                if (uploadId != null) activeCalls[uploadId] = call
 
-                okHttpClient.newCall(request).execute().use { response ->
-                    val responseBody = response.body?.string() ?: ""
-                    if (!response.isSuccessful) {
-                        throw Exception("Upload failed with status ${response.code}: $responseBody")
+                try {
+                    call.execute().use { response ->
+                        val responseBody = response.body?.string().orEmpty()
+                        if (!response.isSuccessful) {
+                            throw IOException("Upload failed with status ${response.code}: $responseBody")
+                        }
+                        parseCloudinaryResponse(responseBody)
                     }
-                    parseCloudinaryResponse(responseBody)
+                } finally {
+                    if (uploadId != null) activeCalls.remove(uploadId)
                 }
             }
         }
     }
 
-    private fun createProgressRequestBody(
+    /**
+     * Writes the file to the sink in chunks, emitting progress per chunk rather
+     * than once at the end.
+     */
+    private fun progressRequestBody(
         file: File,
-        progressListener: (bytesTransferred: Long, totalBytes: Long) -> Unit,
-        totalBytes: Long
-    ): MultipartBody.Part {
-        val fileBody = file.asRequestBody(getMimeType(file.absolutePath).toMediaType())
+        totalBytes: Long,
+        onProgress: (Long, Long) -> Unit
+    ): RequestBody = object : RequestBody() {
+        override fun contentType(): okhttp3.MediaType? =
+            getMimeType(file.absolutePath).toMediaType()
 
-        val body = object : RequestBody() {
-            override fun contentType(): okhttp3.MediaType? = fileBody.contentType()
+        // Declaring the length lets OkHttp stream with a Content-Length header
+        // instead of falling back to chunked transfer encoding.
+        override fun contentLength(): Long = totalBytes
 
-            override fun writeTo(sink: okio.BufferedSink) {
-                val buffer = okio.Buffer()
-                fileBody.writeTo(buffer)
-                val bytesWritten = buffer.size
-                sink.write(buffer, bytesWritten)
+        override fun writeTo(sink: BufferedSink) {
+            file.inputStream().use { input ->
+                val buffer = ByteArray(CHUNK_SIZE_BYTES)
+                var transferred = 0L
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read == -1) break
+                    sink.write(buffer, 0, read)
+                    transferred += read
+                    onProgress(transferred, totalBytes)
+                }
                 sink.flush()
-                progressListener(bytesWritten, totalBytes)
             }
         }
+    }
 
-        return MultipartBody.Part.createFormData("file", file.name, body)
+    /**
+     * Streams [url] to [destinationPath], reporting progress as chunks land on
+     * disk rather than after the whole body is in memory.
+     */
+    suspend fun downloadFile(
+        url: String,
+        destinationPath: String,
+        uploadId: String? = null,
+        progressCallback: (MediaRepository.UploadProgress) -> Unit
+    ): Result<Unit> {
+        return withContext(Dispatchers.IO) {
+            Result.runCatching {
+                val call = okHttpClient.newCall(Request.Builder().url(url).get().build())
+                if (uploadId != null) activeCalls[uploadId] = call
+
+                try {
+                    call.execute().use { response ->
+                        val body = response.body ?: throw IOException("Empty download body")
+                        if (!response.isSuccessful) {
+                            throw IOException("Download failed with status ${response.code}")
+                        }
+
+                        val totalBytes = body.contentLength()
+                        val file = File(destinationPath)
+                        file.parentFile?.mkdirs()
+
+                        var transferred = 0L
+                        body.byteStream().use { input ->
+                            file.outputStream().use { output ->
+                                val buffer = ByteArray(CHUNK_SIZE_BYTES)
+                                while (true) {
+                                    val read = input.read(buffer)
+                                    if (read == -1) break
+                                    output.write(buffer, 0, read)
+                                    transferred += read
+                                    if (totalBytes > 0) {
+                                        progressCallback(
+                                            MediaRepository.UploadProgress(
+                                                uploadId = uploadId.orEmpty(),
+                                                bytesTransferred = transferred,
+                                                totalBytes = totalBytes,
+                                                progressPercent = ((transferred * 100) / totalBytes).toInt(),
+                                                status = MediaRepository.UploadStatus.UPLOADING
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        progressCallback(
+                            MediaRepository.UploadProgress(
+                                uploadId = uploadId.orEmpty(),
+                                bytesTransferred = transferred,
+                                totalBytes = if (totalBytes > 0) totalBytes else transferred,
+                                progressPercent = 100,
+                                status = MediaRepository.UploadStatus.COMPLETED
+                            )
+                        )
+                    }
+                } finally {
+                    if (uploadId != null) activeCalls.remove(uploadId)
+                }
+                Unit
+            }
+        }
     }
 
     private fun parseCloudinaryResponse(json: String): CloudinaryUploadResult {
-        // Parse JSON response from Cloudinary
-        // Using kotlinx.serialization would be better but keeping simple for now
-        val publicId = extractJsonValue(json, "public_id") ?: ""
-        val secureUrl = extractJsonValue(json, "secure_url") ?: ""
-        val width = extractJsonValue(json, "width")?.toIntOrNull()
-        val height = extractJsonValue(json, "height")?.toIntOrNull()
-        val duration = extractJsonValue(json, "duration")?.toDoubleOrNull()
-        val format = extractJsonValue(json, "format") ?: ""
-        val bytes = extractJsonValue(json, "bytes")?.toLongOrNull() ?: 0L
-
+        val publicId = extractJsonValue(json, "public_id").orEmpty()
+        val secureUrl = extractJsonValue(json, "secure_url").orEmpty()
+        if (publicId.isEmpty() || secureUrl.isEmpty()) {
+            // A 2xx without these fields is not a usable upload.
+            throw IOException("Cloudinary response missing public_id or secure_url")
+        }
         return CloudinaryUploadResult(
             publicId = publicId,
             secureUrl = secureUrl,
-            width = width,
-            height = height,
-            duration = duration,
-            format = format,
-            bytes = bytes
+            width = extractJsonValue(json, "width")?.toIntOrNull(),
+            height = extractJsonValue(json, "height")?.toIntOrNull(),
+            duration = extractJsonValue(json, "duration")?.toDoubleOrNull(),
+            format = extractJsonValue(json, "format").orEmpty(),
+            bytes = extractJsonValue(json, "bytes")?.toLongOrNull() ?: 0L
         )
     }
 
@@ -131,57 +241,35 @@ class CloudinaryUploadHelper(private val context: Context) {
     }
 
     private fun getMimeType(filePath: String): String {
-        val extension = File(filePath).extension.lowercase()
-        return when (extension) {
+        return when (File(filePath).extension.lowercase()) {
             "jpg", "jpeg" -> "image/jpeg"
             "png" -> "image/png"
             "gif" -> "image/gif"
             "webp" -> "image/webp"
+            "heic" -> "image/heic"
             "mp4" -> "video/mp4"
             "mov" -> "video/quicktime"
             "webm" -> "video/webm"
+            "mkv" -> "video/x-matroska"
             "mp3" -> "audio/mpeg"
             "wav" -> "audio/wav"
             "ogg" -> "audio/ogg"
             "m4a" -> "audio/mp4"
+            "aac" -> "audio/aac"
             "pdf" -> "application/pdf"
-            "doc", "docx" -> "application/msword"
-            "xls", "xlsx" -> "application/vnd.ms-excel"
+            "doc" -> "application/msword"
+            "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            "xls" -> "application/vnd.ms-excel"
+            "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             "txt" -> "text/plain"
+            "zip" -> "application/zip"
             else -> "application/octet-stream"
         }
     }
 
-    suspend fun downloadFile(
-        url: String,
-        destinationPath: String,
-        progressCallback: (MediaRepository.UploadProgress) -> Unit
-    ): Result<Unit> {
-        return withContext(Dispatchers.IO) {
-            try {
-                val file = File(destinationPath)
-                file.parentFile?.mkdirs()
-
-                val response = client.get(url)
-                val totalBytes = response.headers[HttpHeaders.ContentLength]?.toLongOrNull() ?: 0L
-                val bytes = response.body<ByteArray>()
-                file.writeBytes(bytes)
-
-                progressCallback(MediaRepository.UploadProgress(
-                    uploadId = "download_${file.name}",
-                    bytesTransferred = totalBytes,
-                    totalBytes = totalBytes,
-                    progressPercent = 100,
-                    status = MediaRepository.UploadStatus.COMPLETED
-                ))
-                Result.success(Unit)
-            } catch (e: Throwable) {
-                Result.failure(e)
-            }
-        }
-    }
-
-    fun close() {
-        client.close()
+    companion object {
+        /** 256 KiB: large enough to keep throughput up, small enough that
+         *  progress updates stay responsive and memory use is flat. */
+        private const val CHUNK_SIZE_BYTES = 256 * 1024
     }
 }

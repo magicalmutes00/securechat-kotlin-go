@@ -7,6 +7,8 @@ data class Message(
     val id: Long,
     val conversationId: Long,
     val senderId: Long,
+    /** Author's display name; null when unknown. Used to attribute group messages. */
+    val senderName: String? = null,
     val type: MessageType,
     val text: String?,
     val media: Media?,
@@ -40,11 +42,46 @@ data class Message(
 }
 
 enum class MessageType {
-    TEXT, IMAGE, VIDEO, AUDIO, DOCUMENT
+    TEXT, IMAGE, VIDEO, AUDIO, DOCUMENT;
+
+    /** Lowercase form used by the wire protocol and Room. */
+    val storageValue: String get() = name.lowercase()
+
+    companion object {
+        /**
+         * Decodes a type from the wire or the database, tolerating either
+         * casing and falling back to [TEXT] for anything unknown. `valueOf` on a
+         * raw server string throws, and because the transform runs inside
+         * `Result.map` (which does not guard it) that crash escaped into
+         * `viewModelScope` rather than surfacing as a failed Result.
+         */
+        fun fromStorage(raw: String?): MessageType =
+            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: TEXT
+    }
 }
 
 enum class MessageStatus {
-    PENDING, SENDING, SENT, DELIVERED, READ, FAILED
+    PENDING, SENDING, SENT, DELIVERED, READ, FAILED;
+
+    /**
+     * Lowercase form persisted in Room and exchanged with the server.
+     *
+     * This is the single source of truth for the stored representation. The DAO
+     * queries filter lowercase literals ('pending', 'sending', 'failed'), so any
+     * call site that wrote `name` (uppercase) created rows those queries could
+     * never match — which silently broke message retry and the pending sweep.
+     */
+    val storageValue: String get() = name.lowercase()
+
+    companion object {
+        /**
+         * Decodes a status from the database or the server, tolerating either
+         * casing and falling back to [SENT] for unknown values instead of
+         * throwing on a status newer than this build.
+         */
+        fun fromStorage(raw: String?): MessageStatus =
+            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: SENT
+    }
 }
 
 @Serializable
@@ -78,5 +115,14 @@ data class Media(
 }
 
 enum class MediaResourceType {
-    IMAGE, VIDEO, RAW, AUDIO
+    IMAGE, VIDEO, RAW, AUDIO;
+
+    /** Lowercase form used by the wire protocol and Room. */
+    val storageValue: String get() = name.lowercase()
+
+    companion object {
+        /** Decodes a resource type from the wire/DB, falling back to [RAW]. */
+        fun fromStorage(raw: String?): MediaResourceType =
+            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: RAW
+    }
 }

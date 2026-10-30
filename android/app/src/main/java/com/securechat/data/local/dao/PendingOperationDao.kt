@@ -31,6 +31,9 @@ interface PendingOperationDao {
     @Query("SELECT * FROM pending_operations ORDER BY createdAt DESC")
     fun getAll(): Flow<List<PendingOperationEntity>>
 
+    @Query("SELECT COUNT(*) FROM pending_operations WHERE status = 'pending'")
+    suspend fun countPending(): Int
+
     @Query("DELETE FROM pending_operations WHERE id = :id")
     suspend fun deleteById(id: String): Int
 

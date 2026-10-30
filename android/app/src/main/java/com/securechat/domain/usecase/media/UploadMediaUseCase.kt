@@ -12,13 +12,14 @@ class UploadMediaUseCase @javax.inject.Inject constructor(
     suspend operator fun invoke(
         params: MediaRepository.SignedUploadParams,
         filePath: String,
+        uploadId: String? = null,
         progressCallback: (UploadProgress) -> Unit
     ): Result<MediaRepository.CloudinaryUploadResult> {
         return withContext(Dispatchers.IO) {
             if (filePath.isBlank()) {
                 Result.failure(IllegalArgumentException("File path is required"))
             } else {
-                mediaRepository.uploadMedia(params, filePath, progressCallback)
+                mediaRepository.uploadMedia(params, filePath, uploadId, progressCallback)
             }
         }
     }

@@ -42,7 +42,9 @@ fun DocumentViewerScreen(
     media: Media,
     onClose: () -> Unit,
     onDownload: () -> Unit,
-    onShare: () -> Unit
+    onShare: () -> Unit,
+    onOpen: () -> Unit = {},
+    statusMessage: String? = null
 ) {
     Box(modifier = Modifier.fillMaxSize().background(Color.White)) {
         // Document Preview Area
@@ -84,6 +86,14 @@ fun DocumentViewerScreen(
                     fontSize = 14.sp,
                     color = Color.Gray
                 )
+
+                statusMessage?.let { message ->
+                    Text(
+                        text = message,
+                        fontSize = 12.sp,
+                        color = Color(0xFF1A73E8)
+                    )
+                }
             }
         }
         
@@ -127,7 +137,7 @@ fun DocumentViewerScreen(
                     Text("Share")
                 }
                 
-                IconButton(onClick = { /* Open with */ }) {
+                IconButton(onClick = onOpen) {
                     Icon(
                         imageVector = Icons.Default.OpenInNew,
                         contentDescription = "Open with",

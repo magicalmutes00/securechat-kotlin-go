@@ -21,8 +21,13 @@ import com.securechat.presentation.auth.OtpVerifyScreen
 import com.securechat.presentation.auth.ProfileSetupScreen
 import com.securechat.presentation.chat.ChatScreen
 import com.securechat.presentation.contacts.ContactsScreen
+import com.securechat.presentation.group.AddMembersScreen
+import com.securechat.presentation.group.CreateGroupScreen
 import com.securechat.presentation.home.HomeScreen
 import com.securechat.presentation.home.HomeViewModel
+import com.securechat.presentation.media.DocumentViewerScreen
+import com.securechat.presentation.media.MediaViewerScreen
+import com.securechat.presentation.media.MediaViewerViewModel
 import com.securechat.presentation.profile.ProfileScreen
 import com.securechat.presentation.settings.AboutScreen
 import com.securechat.presentation.settings.ChatSettingsScreen
@@ -111,6 +116,7 @@ fun AppNavHost(
             HomeScreen(
                 onLogout = onLogout,
                 onNewChat = { navController.navigate("contacts") },
+                onNewGroup = { navController.navigate("group/new") },
                 onSettings = { navController.navigate("settings") },
                 onConversationClick = { conversationId, otherUserName ->
                     navController.navigate("conversation/$conversationId?name=${android.net.Uri.encode(otherUserName)}")
@@ -130,7 +136,16 @@ fun AppNavHost(
                 conversationId = conversationId,
                 otherUserName = entry.arguments?.getString("name") ?: "Chat",
                 otherUserAvatar = null,
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                // Leaving a group invalidates the chat: go back to the list, which
+                // refetches and drops the row.
+                onConversationLeft = { navController.popBackStack() },
+                onAddMembers = { navController.navigate("group/$conversationId/members/add") },
+                onOpenMedia = { mediaId, isDocument ->
+                    navController.navigate(
+                        if (isDocument) "document/viewer/$mediaId" else "media/viewer/$mediaId"
+                    )
+                }
             )
         }
 
@@ -179,6 +194,29 @@ fun AppNavHost(
                     )
                 },
                 onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable("group/new") {
+            CreateGroupScreen(
+                onBack = { navController.popBackStack() },
+                onGroupCreated = { conversationId ->
+                    navController.navigate("conversation/$conversationId") {
+                        popUpTo("home")
+                    }
+                }
+            )
+        }
+
+        composable(
+            route = "group/{conversationId}/members/add",
+            arguments = listOf(navArgument("conversationId") { type = NavType.LongType })
+        ) { entry ->
+            val conversationId = entry.arguments?.getLong("conversationId") ?: 0L
+            AddMembersScreen(
+                conversationId = conversationId,
+                onBack = { navController.popBackStack() },
+                onMembersAdded = { navController.popBackStack() }
             )
         }
 
@@ -240,21 +278,49 @@ fun AppNavHost(
         }
 
         composable(
-            route = "media/viewer",
-            arguments = listOf(
-                navArgument("media") { type = NavType.StringType }
-            )
+            route = "media/viewer/{mediaId}",
+            arguments = listOf(navArgument("mediaId") { type = NavType.LongType })
         ) {
-            // Media viewer is not yet wired up.
+            val viewer: MediaViewerViewModel = hiltViewModel()
+            val media by viewer.media.collectAsState()
+            val progress by viewer.downloadProgress
+            val status by viewer.statusMessage
+
+            // Null until the Room cache read resolves; a spinner is honest, an
+            // empty screen would look like a broken attachment.
+            media?.let { attachment ->
+                MediaViewerScreen(
+                    media = attachment,
+                    onClose = { navController.popBackStack() },
+                    onDownload = { viewer.download() },
+                    statusMessage = status,
+                    downloadProgress = progress
+                )
+            } ?: Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
         }
 
         composable(
-            route = "document/viewer",
-            arguments = listOf(
-                navArgument("media") { type = NavType.StringType }
-            )
+            route = "document/viewer/{mediaId}",
+            arguments = listOf(navArgument("mediaId") { type = NavType.LongType })
         ) {
-            // Document viewer is not yet wired up.
+            val viewer: MediaViewerViewModel = hiltViewModel()
+            val media by viewer.media.collectAsState()
+            val status by viewer.statusMessage
+
+            media?.let { attachment ->
+                DocumentViewerScreen(
+                    media = attachment,
+                    onClose = { navController.popBackStack() },
+                    onDownload = { viewer.download() },
+                    onShare = { viewer.share() },
+                    onOpen = { viewer.openExternally() },
+                    statusMessage = status
+                )
+            } ?: Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
         }
     }
 }

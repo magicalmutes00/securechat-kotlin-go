@@ -14,6 +14,7 @@ import com.securechat.domain.model.ConversationType
 import com.securechat.domain.model.User
 import com.securechat.domain.repository.ConversationRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
@@ -81,6 +82,50 @@ class ConversationRepositoryImpl @Inject constructor(
         }
     }
 
+    override suspend fun createGroup(name: String, memberIds: List<Long>): Result<Conversation> {
+        return withContext(Dispatchers.IO) {
+            apiService.createConversation(com.securechat.data.remote.dto.CreateConversationRequest(
+                type = "group",
+                name = name,
+                participant_ids = memberIds
+            )).map { dto ->
+                val conversation = mapToConversation(dto)
+                saveConversation(conversation)
+                conversation
+            }
+        }
+    }
+
+    override suspend fun renameConversation(conversationId: Long, name: String): Result<Conversation> {
+        return withContext(Dispatchers.IO) {
+            apiService.renameConversation(conversationId, name).map { dto ->
+                val conversation = mapToConversation(dto)
+                saveConversation(conversation)
+                conversation
+            }
+        }
+    }
+
+    override suspend fun addMembers(conversationId: Long, userIds: List<Long>): Result<Conversation> {
+        return withContext(Dispatchers.IO) {
+            apiService.addMembers(conversationId, userIds).map { dto ->
+                val conversation = mapToConversation(dto)
+                saveConversation(conversation)
+                conversation
+            }
+        }
+    }
+
+    override suspend fun removeMember(conversationId: Long, userId: Long): Result<Conversation> {
+        return withContext(Dispatchers.IO) {
+            apiService.removeMember(conversationId, userId).map { dto ->
+                val conversation = mapToConversation(dto)
+                saveConversation(conversation)
+                conversation
+            }
+        }
+    }
+
     override suspend fun deleteConversation(conversationId: Long): Result<Unit> {
         return withContext(Dispatchers.IO) {
             apiService.deleteConversation(conversationId)
@@ -105,6 +150,25 @@ class ConversationRepositoryImpl @Inject constructor(
             .distinctUntilChanged()
     }
 
+    override fun observeParticipants(conversationId: Long): Flow<List<ConversationParticipant>> {
+        // Presence lives on the participant rows, which the socket processor
+        // updates in place. Display names are not cached here, so `user` is null;
+        // consumers that need a name use the conversation payload instead.
+        return database.conversationParticipantDao().getByConversationId(conversationId)
+            .map { entities ->
+                entities.map {
+                    ConversationParticipant(
+                        conversationId = it.conversationId,
+                        userId = it.userId,
+                        joinedAt = it.joinedAt,
+                        leftAt = it.leftAt,
+                        isOnline = it.isOnline,
+                        lastSeen = it.lastSeen
+                    )
+                }
+            }
+    }
+
     override fun observeUnreadCount(): kotlinx.coroutines.flow.Flow<Int> {
         // This would need a query that joins conversations and messages
         // For now, return 0
@@ -122,6 +186,8 @@ class ConversationRepositoryImpl @Inject constructor(
                 userId = p.user_id,
                 joinedAt = 0,
                 leftAt = null,
+                isOnline = p.is_online,
+                lastSeen = p.last_seen ?: 0L,
                 user = mapToUser(
                     com.securechat.data.remote.dto.UserDto(
                         id = p.user_id,
@@ -135,7 +201,8 @@ class ConversationRepositoryImpl @Inject constructor(
         }
         return Conversation(
             id = dto.id,
-            type = ConversationType.valueOf(dto.type.uppercase()),
+            type = ConversationType.fromStorage(dto.type),
+            name = dto.name,
             participants = participants,
             lastMessage = dto.last_message?.let { mapToPreview(it, dto.id) },
             unreadCount = dto.unread_count,
@@ -154,11 +221,12 @@ class ConversationRepositoryImpl @Inject constructor(
             id = dto.id,
             conversationId = conversationId,
             senderId = dto.sender_id,
-            type = com.securechat.domain.model.MessageType.valueOf(dto.type.uppercase()),
+            senderName = dto.sender_name,
+            type = com.securechat.domain.model.MessageType.fromStorage(dto.type),
             text = dto.text,
             media = null,
             replyTo = null,
-            status = com.securechat.domain.model.MessageStatus.valueOf(dto.status.uppercase()),
+            status = com.securechat.domain.model.MessageStatus.fromStorage(dto.status),
             createdAt = dto.created_at,
             updatedAt = dto.created_at,
             deliveredAt = null,
@@ -168,11 +236,10 @@ class ConversationRepositoryImpl @Inject constructor(
     }
 
     private fun mapToConversation(entity: ConversationEntity): Conversation {
-        // Need to load participants and last message
-        // Simplified for now
         return Conversation(
-            id = entity.id,
-            type = ConversationType.valueOf(entity.type.uppercase()),
+            id = entity.serverId ?: entity.id,
+            type = ConversationType.fromStorage(entity.type),
+            name = entity.name,
             participants = emptyList(),
             lastMessage = null,
             unreadCount = 0,
@@ -200,11 +267,11 @@ class ConversationRepositoryImpl @Inject constructor(
             id = dto.id,
             conversationId = dto.conversation_id,
             senderId = dto.sender_id,
-            type = com.securechat.domain.model.MessageType.valueOf(dto.type.uppercase()),
+            type = com.securechat.domain.model.MessageType.fromStorage(dto.type),
             text = dto.text,
             media = dto.media?.let { mapToMedia(it) },
             replyTo = dto.reply_to?.let { mapToMessage(it) },
-            status = com.securechat.domain.model.MessageStatus.valueOf(dto.status.uppercase()),
+            status = com.securechat.domain.model.MessageStatus.fromStorage(dto.status),
             createdAt = dto.created_at,
             updatedAt = dto.updated_at,
             deliveredAt = dto.delivered_at,
@@ -218,7 +285,7 @@ class ConversationRepositoryImpl @Inject constructor(
             id = dto.id,
             messageId = dto.message_id ?: 0,
             cloudinaryPublicId = dto.cloudinary_public_id,
-            resourceType = com.securechat.domain.model.MediaResourceType.valueOf(dto.resource_type.uppercase()),
+            resourceType = com.securechat.domain.model.MediaResourceType.fromStorage(dto.resource_type),
             secureUrl = dto.secure_url,
             originalFilename = dto.original_filename,
             mimeType = dto.mime_type,
@@ -235,7 +302,8 @@ class ConversationRepositoryImpl @Inject constructor(
     private suspend fun saveConversation(conversation: Conversation) {
         val entity = ConversationEntity(
             serverId = conversation.id,
-            type = conversation.type.name.lowercase(),
+            type = conversation.type.storageValue,
+            name = conversation.name,
             createdAt = conversation.createdAt,
             updatedAt = conversation.updatedAt
         )
@@ -246,7 +314,11 @@ class ConversationRepositoryImpl @Inject constructor(
                 conversationId = conversation.id,
                 userId = participant.userId,
                 joinedAt = participant.joinedAt,
-                leftAt = participant.leftAt
+                leftAt = participant.leftAt,
+                // Presence is overwritten rather than merged: this payload is the
+                // server's current view, so it wins over anything cached.
+                isOnline = participant.isOnline,
+                lastSeen = participant.lastSeen
             )
             database.conversationParticipantDao().insert(participantEntity)
         }

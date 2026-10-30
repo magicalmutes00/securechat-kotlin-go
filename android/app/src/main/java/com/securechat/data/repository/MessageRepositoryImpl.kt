@@ -1,25 +1,32 @@
 package com.securechat.data.repository
 
 import com.securechat.core.common.Result
+import com.securechat.core.utils.UserSession
 import com.securechat.data.local.database.SecureChatDatabase
 import com.securechat.data.local.dao.MessageDao
 import com.securechat.data.local.dao.MediaDao
 import com.securechat.data.local.entity.MediaEntity
 import com.securechat.data.local.entity.MessageEntity
+import com.securechat.data.local.entity.MessageWithMedia
+import com.securechat.data.local.entity.toDomain
 import com.securechat.data.remote.api.ApiService
 import com.securechat.data.remote.dto.MessageDto
 import com.securechat.data.remote.dto.MediaDto
 import com.securechat.data.remote.websocket.WebSocketManager
+import com.securechat.data.sync.PendingOperationQueue
 import com.securechat.domain.model.Message
 import com.securechat.domain.model.Media
+import com.securechat.domain.model.MediaResourceType
 import com.securechat.domain.model.MessageStatus
 import com.securechat.domain.model.MessageType
 import com.securechat.domain.repository.MessageRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
+import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -29,13 +36,14 @@ class MessageRepositoryImpl @Inject constructor(
     private val database: SecureChatDatabase,
     private val messageDao: MessageDao,
     private val mediaDao: MediaDao,
-    private val webSocketManager: WebSocketManager
+    private val webSocketManager: WebSocketManager,
+    private val operationQueue: PendingOperationQueue
 ) : MessageRepository {
 
     override suspend fun getMessages(
         conversationId: Long,
         limit: Int,
-        cursor: Long?
+        cursor: String?
     ): Result<MessageRepository.MessagePage> {
         return withContext(Dispatchers.IO) {
             apiService.getMessages(conversationId, cursor, limit)
@@ -82,10 +90,12 @@ class MessageRepositoryImpl @Inject constructor(
             )
 
             if (sendResult.isFailure) {
+                // storageValue (lowercase) is the form the DAO filters on;
+                // writing `name` here left the row invisible to getFailedMessages.
                 database.messageDao().getByTempId(tempId)?.let { entity ->
                     database.messageDao().update(
                         entity.copy(
-                            status = MessageStatus.FAILED.name.lowercase(),
+                            status = MessageStatus.FAILED.storageValue,
                             updatedAt = System.currentTimeMillis()
                         )
                     )
@@ -98,71 +108,134 @@ class MessageRepositoryImpl @Inject constructor(
 
     override suspend fun resendMessage(messageId: Long): Result<Unit> {
         return withContext(Dispatchers.IO) {
-            val entity = database.messageDao().getById(messageId).first()
-            if (entity != null) {
-                if (entity.status == MessageStatus.FAILED.name) {
-                    val updatedEntity = entity.copy(
-                        status = MessageStatus.SENDING.name,
+            val entity = messageDao.getById(messageId).first()
+                ?: return@withContext Result.failure(IllegalArgumentException("Message not found"))
+
+            // Compare through fromStorage: the row holds "failed" while
+            // MessageStatus.FAILED.name is "FAILED", so the old equality check
+            // was never true and retry was permanently dead.
+            if (MessageStatus.fromStorage(entity.status) != MessageStatus.FAILED) {
+                return@withContext Result.failure(IllegalStateException("Message is not in failed state"))
+            }
+
+            val tempId = entity.tempId ?: UUID.randomUUID().toString()
+
+            messageDao.update(
+                entity.copy(
+                    status = MessageStatus.SENDING.storageValue,
+                    tempId = tempId,
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+
+            // Actually re-send. Previously this only flipped the status, so the
+            // row sat in SENDING forever and the user saw a spinner that never
+            // resolved.
+            val sendResult = webSocketManager.sendMessage(
+                conversationId = entity.conversationId,
+                type = entity.type,
+                text = entity.text,
+                mediaId = entity.mediaId,
+                replyToId = entity.replyToId,
+                tempId = tempId
+            )
+
+            if (sendResult.isFailure) {
+                messageDao.update(
+                    entity.copy(
+                        status = MessageStatus.FAILED.storageValue,
+                        tempId = tempId,
                         updatedAt = System.currentTimeMillis()
                     )
-                    database.messageDao().update(updatedEntity)
-                    Result.success(Unit)
-                } else {
-                    Result.failure(IllegalStateException("Message is not in failed state"))
-                }
+                )
+                Result.failure(
+                    (sendResult as? Result.Failure)?.exception
+                        ?: IllegalStateException("Resend failed")
+                )
             } else {
-                Result.failure(IllegalArgumentException("Message not found"))
+                Result.success(Unit)
             }
         }
     }
 
     override suspend fun deleteMessage(messageId: Long): Result<Unit> {
         return withContext(Dispatchers.IO) {
-            apiService.deleteMessage(messageId)
-                .flatMap {
-                    database.messageDao().deleteById(messageId)
+            val entity = messageDao.getById(messageId).first()
+
+            // A message that never reached the server has nothing to delete there,
+            // and nothing to queue either — it is not in any conversation yet.
+            if (entity?.serverId == null) {
+                messageDao.deleteById(messageId)
+                return@withContext Result.success(Unit)
+            }
+
+            when (val deleted = apiService.deleteMessage(entity.serverId)) {
+                is Result.Success -> {
+                    messageDao.deleteById(messageId)
                     Result.success(Unit)
                 }
+                is Result.Failure -> {
+                    // Hide it immediately — the user asked for it gone — but queue
+                    // the server-side delete. Returning success here would claim
+                    // the delete happened when the message is still in everyone
+                    // else's history.
+                    operationQueue.enqueueMessageDelete(entity.conversationId, entity.serverId)
+                    messageDao.deleteById(messageId)
+                    Result.failure(deleted.exception)
+                }
+            }
         }
     }
 
     override suspend fun markAsRead(conversationId: Long, messageId: Long): Result<Unit> {
         return withContext(Dispatchers.IO) {
-            // This would be sent via WebSocket
-            Result.success(Unit)
+            val sent = webSocketManager.sendReadReceipt(messageId, conversationId)
+            if (sent.isFailure) {
+                operationQueue.enqueueReadReceipt(conversationId, messageId)
+            }
+            sent
         }
     }
 
     override suspend fun markConversationAsRead(conversationId: Long): Result<Unit> {
         return withContext(Dispatchers.IO) {
-            // Local read state updates immediately; the newest unread incoming
-            // message gets a WS receipt so the sender's UI updates too.
+            // Read the newest unread id *before* flipping the local rows: the
+            // query filters on `status != 'read'`, so running it afterwards always
+            // found nothing and the receipt was never sent at all.
+            val latestUnread = messageDao.getLatestUnreadServerId(conversationId, currentUserId())
+
             messageDao.markConversationRead(conversationId, currentUserId(), System.currentTimeMillis())
-            messageDao.getLatestUnreadServerId(conversationId, currentUserId())?.let { serverId ->
-                webSocketManager.sendReadReceipt(serverId, conversationId)
+
+            latestUnread?.let { serverId ->
+                val sent = webSocketManager.sendReadReceipt(serverId, conversationId)
+                if (sent.isFailure) {
+                    // Socket down: keep it, so the sender still gets their blue
+                    // ticks once the connection is back.
+                    operationQueue.enqueueReadReceipt(conversationId, serverId)
+                }
             }
             Result.success(Unit)
         }
     }
 
-    // The current user id is not always known at call time; receipts embed it
-    // as 0 and the server derives the identity from the session, so this is
-    // only used for the local query predicate where any non-zero value works.
-    private fun currentUserId(): Long = 0L
+    // The receipt frame itself carries 0 for the actor — the server derives the
+    // identity from the session — but the local query needs the real id: with 0,
+    // `senderId != :currentUserId` matched every row, so opening a chat marked
+    // your own outgoing messages read.
+    private fun currentUserId(): Long = UserSession.currentUserId
 
     override fun observeMessages(conversationId: Long): kotlinx.coroutines.flow.Flow<List<Message>> {
-        return database.messageDao().observeByConversationId(conversationId)
-            .map { entities ->
-                entities.map { mapToMessage(it) }
+        return database.messageDao().observeWithMedia(conversationId)
+            .map { rows ->
+                rows.map { mapToMessage(it) }
             }
             .distinctUntilChanged()
     }
 
-    override fun observeMessageStatus(messageId: Long): kotlinx.coroutines.flow.Flow<MessageRepository.MessageStatus> {
+    override fun observeMessageStatus(messageId: Long): Flow<MessageStatus> {
         return database.messageDao().getById(messageId)
             .map { entity ->
-                entity?.let { MessageRepository.MessageStatus.valueOf(it.status.uppercase()) }
-                    ?: MessageRepository.MessageStatus.PENDING
+                entity?.let { MessageStatus.fromStorage(it.status) } ?: MessageStatus.PENDING
             }
             .distinctUntilChanged()
     }
@@ -172,11 +245,12 @@ class MessageRepositoryImpl @Inject constructor(
             id = dto.id,
             conversationId = dto.conversation_id,
             senderId = dto.sender_id,
-            type = MessageType.valueOf(dto.type.uppercase()),
+            senderName = dto.sender_name,
+            type = MessageType.fromStorage(dto.type),
             text = dto.text,
             media = dto.media?.let { mapToMedia(it) },
             replyTo = dto.reply_to?.let { mapToMessage(it) },
-            status = MessageStatus.valueOf(dto.status.uppercase()),
+            status = MessageStatus.fromStorage(dto.status),
             createdAt = dto.created_at,
             updatedAt = dto.updated_at,
             deliveredAt = dto.delivered_at,
@@ -185,16 +259,21 @@ class MessageRepositoryImpl @Inject constructor(
         )
     }
 
-    private fun mapToMessage(entity: MessageEntity): Message {
+    private fun mapToMessage(row: MessageWithMedia): Message {
+        val entity = row.message
         return Message(
             id = entity.id,
             conversationId = entity.conversationId,
             senderId = entity.senderId,
-            type = MessageType.valueOf(entity.type.uppercase()),
+            senderName = entity.senderName,
+            type = MessageType.fromStorage(entity.type),
             text = entity.text,
-            media = null, // Loaded separately
+            // Resolved by the @Relation join on media.serverId. A message whose
+            // media row is missing (deleted asset) keeps media = null and renders
+            // as its placeholder rather than crashing.
+            media = row.media?.let { mapToMedia(it) },
             replyTo = null,
-            status = MessageStatus.valueOf(entity.status.uppercase()),
+            status = MessageStatus.fromStorage(entity.status),
             createdAt = entity.createdAt,
             updatedAt = entity.updatedAt,
             deliveredAt = entity.deliveredAt,
@@ -205,12 +284,14 @@ class MessageRepositoryImpl @Inject constructor(
         )
     }
 
+    private fun mapToMedia(entity: MediaEntity): Media = entity.toDomain()
+
     private fun mapToMedia(dto: MediaDto): Media {
         return Media(
             id = dto.id,
             messageId = dto.message_id ?: 0,
             cloudinaryPublicId = dto.cloudinary_public_id,
-            resourceType = com.securechat.domain.model.MediaResourceType.valueOf(dto.resource_type.uppercase()),
+            resourceType = MediaResourceType.fromStorage(dto.resource_type),
             secureUrl = dto.secure_url,
             originalFilename = dto.original_filename,
             mimeType = dto.mime_type,
@@ -225,31 +306,59 @@ class MessageRepositoryImpl @Inject constructor(
     }
 
     private suspend fun saveMessage(message: Message) {
+        // A message with a server id may already be cached — it can arrive on the
+        // socket before the REST page that also contains it. Updating that row
+        // keeps one row per message; inserting again showed every message twice,
+        // and (because media is keyed by message id) cached the attachment twice.
+        val existing = if (!message.isOptimistic && message.id > 0) {
+            database.messageDao().getByServerId(message.id).first()
+        } else {
+            null
+        }
+
         val entity = MessageEntity(
+            id = existing?.id ?: 0,
             serverId = if (message.isOptimistic) null else message.id,
             conversationId = message.conversationId,
             senderId = message.senderId,
-            type = message.type.name.lowercase(),
+            senderName = message.senderName,
+            type = message.type.storageValue,
             text = message.text,
             mediaId = message.media?.id,
             replyToId = message.replyTo?.id,
-            status = message.status.name.lowercase(),
+            status = message.status.storageValue,
             createdAt = message.createdAt,
             updatedAt = message.updatedAt,
             deliveredAt = message.deliveredAt,
             readAt = message.readAt,
             deletedAt = message.deletedAt,
-            tempId = message.tempId,
+            tempId = message.tempId ?: existing?.tempId,
             isOptimistic = message.isOptimistic
         )
-        database.messageDao().insert(entity)
-        
+
+        // The row id the insert assigned, not `entity.id` — that stays 0 for a
+        // new optimistic message, and using it as the media row's messageId
+        // wrote 0 for every attachment. `media.messageId` is uniquely indexed, so
+        // the second image in a conversation failed the insert outright.
+        val localMessageId = if (existing != null) {
+            database.messageDao().update(entity)
+            entity.id
+        } else {
+            database.messageDao().insert(entity)
+        }
+
         message.media?.let { media ->
+            // Exactly one media row per message: the relation expects a single
+            // match, and `serverId` carries no unique constraint, so re-saving a
+            // message (a REST page refresh, a WS echo of the same message) would
+            // otherwise append a duplicate that the @Relation resolution chokes on.
+            database.mediaDao().deleteByMessageId(localMessageId)
+
             val mediaEntity = MediaEntity(
                 serverId = if (media.id > 0) media.id else null,
-                messageId = entity.id,
+                messageId = localMessageId,
                 cloudinaryPublicId = media.cloudinaryPublicId,
-                resourceType = media.resourceType.name.lowercase(),
+                resourceType = media.resourceType.storageValue,
                 secureUrl = media.secureUrl,
                 originalFilename = media.originalFilename,
                 mimeType = media.mimeType,

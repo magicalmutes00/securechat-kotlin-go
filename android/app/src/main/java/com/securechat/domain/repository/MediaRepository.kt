@@ -7,10 +7,30 @@ import kotlinx.coroutines.flow.Flow
 
 interface MediaRepository {
     suspend fun getSignedUploadParams(request: SignedUploadRequest): Result<SignedUploadParams>
-    suspend fun completeUpload(request: CompleteUploadRequest): Result<Message>
+
+    /**
+     * Finalises an upload and returns the media record itself.
+     *
+     * It returns [Media], not [Message]: `/media/complete` registers the asset
+     * and nothing else. It used to be declared as returning a Message, which was
+     * a fiction the implementation papered over by inventing a message with
+     * id = 0 and conversationId = 0 — so the caller had no media id to reference
+     * and the attachment could never be sent.
+     */
+    suspend fun completeUpload(request: CompleteUploadRequest): Result<Media>
     suspend fun uploadMedia(
         params: SignedUploadParams,
         filePath: String,
+        /**
+         * Caller-chosen id. A generated id is invisible to the caller until the
+         * upload has already started, which made [cancelUpload] and
+         * [retryUpload] impossible to reach from the UI — there was nothing to
+         * pass them. Supplying the id up front makes the transfer addressable.
+         *
+         * It sits before [progressCallback] so the callback stays the trailing
+         * lambda, which every existing call site relies on.
+         */
+        uploadId: String? = null,
         progressCallback: (UploadProgress) -> Unit
     ): Result<CloudinaryUploadResult>
     suspend fun downloadMedia(media: Media, destinationPath: String, progressCallback: (UploadProgress) -> Unit): Result<Unit>

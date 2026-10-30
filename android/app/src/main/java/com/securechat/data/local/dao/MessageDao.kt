@@ -4,8 +4,10 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import com.securechat.data.local.entity.MessageEntity
+import com.securechat.data.local.entity.MessageWithMedia
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -37,11 +39,27 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND deletedAt IS NULL ORDER BY createdAt DESC")
     fun observeByConversationId(conversationId: Long): Flow<List<MessageEntity>>
 
+    /**
+     * The chat list's source of truth: messages with their attachment resolved.
+     * @Transaction keeps the message and media reads on one consistent snapshot,
+     * so a media row inserted between the two queries cannot be missed.
+     */
+    @Transaction
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND deletedAt IS NULL ORDER BY createdAt DESC")
+    fun observeWithMedia(conversationId: Long): Flow<List<MessageWithMedia>>
+
+    @Transaction
+    @Query("SELECT * FROM messages WHERE id = :id")
+    suspend fun getWithMediaById(id: Long): MessageWithMedia?
+
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND status IN ('pending', 'sending') AND deletedAt IS NULL")
     suspend fun getPendingMessages(conversationId: Long): List<MessageEntity>
 
     @Query("SELECT * FROM messages WHERE status = 'failed' AND deletedAt IS NULL")
     suspend fun getFailedMessages(): List<MessageEntity>
+
+    @Query("SELECT COUNT(*) FROM messages WHERE status IN ('pending', 'sending', 'failed') AND deletedAt IS NULL")
+    suspend fun countUnsynced(): Int
 
     @Query("SELECT COUNT(*) FROM messages WHERE conversationId = :conversationId AND readAt IS NULL AND deletedAt IS NULL AND senderId != :currentUserId")
     suspend fun getUnreadCount(conversationId: Long, currentUserId: Long): Int

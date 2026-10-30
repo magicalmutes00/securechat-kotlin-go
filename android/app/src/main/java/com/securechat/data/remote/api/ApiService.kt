@@ -1,4 +1,4 @@
-﻿package com.securechat.data.remote.api
+package com.securechat.data.remote.api
 
 import com.securechat.core.common.Result
 import com.securechat.data.remote.dto.*
@@ -33,10 +33,13 @@ interface ApiService {
     suspend fun getConversations(cursor: String?, limit: Int): Result<List<ConversationDto>>
     suspend fun createConversation(request: CreateConversationRequest): Result<ConversationDto>
     suspend fun getConversation(id: Long): Result<ConversationDto>
+    suspend fun renameConversation(id: Long, name: String): Result<ConversationDto>
+    suspend fun addMembers(id: Long, userIds: List<Long>): Result<ConversationDto>
+    suspend fun removeMember(id: Long, userId: Long): Result<ConversationDto>
     suspend fun deleteConversation(id: Long): Result<Unit>
 
     // Messages
-    suspend fun getMessages(conversationId: Long, cursor: Long?, limit: Int): Result<MessagePageDto>
+    suspend fun getMessages(conversationId: Long, cursor: String?, limit: Int): Result<MessagePageDto>
     suspend fun deleteMessage(id: Long): Result<Unit>
 
     // Media
@@ -44,6 +47,12 @@ interface ApiService {
 suspend fun completeUpload(request: CompleteUploadRequest): Result<MediaDto>
     suspend fun getMedia(id: Long): Result<MediaDto>
     suspend fun deleteMedia(id: Long): Result<Unit>
+
+    // E2EE keys
+    suspend fun publishIdentityKey(request: PublishIdentityRequest): Result<Unit>
+    suspend fun publishSignedPreKey(request: PublishSignedPreKeyRequest): Result<Unit>
+    suspend fun publishOneTimePreKeys(request: PublishOneTimePreKeysRequest): Result<Int>
+    suspend fun getUnclaimedPreKeyCount(): Result<Long>
 
     // Devices
     suspend fun getDevices(): Result<List<DeviceDto>>
@@ -208,8 +217,30 @@ class ApiServiceImpl(
         }
     }
 
+    override suspend fun renameConversation(id: Long, name: String): Result<ConversationDto> = executeRequest {
+        client.patch("$baseUrl/conversations/$id") {
+            headers { authHeader().forEach { (k, v) -> append(k, v) } }
+            contentType(ContentType.Application.Json)
+            setBody(com.securechat.data.remote.dto.RenameConversationRequest(name = name))
+        }
+    }
+
     override suspend fun getConversation(id: Long): Result<ConversationDto> = executeRequest {
         client.get("$baseUrl/conversations/$id") {
+            headers { authHeader().forEach { (k, v) -> append(k, v) } }
+        }
+    }
+
+    override suspend fun addMembers(id: Long, userIds: List<Long>): Result<ConversationDto> = executeRequest {
+        client.post("$baseUrl/conversations/$id/members") {
+            headers { authHeader().forEach { (k, v) -> append(k, v) } }
+            contentType(ContentType.Application.Json)
+            setBody(com.securechat.data.remote.dto.AddMembersRequest(participant_ids = userIds))
+        }
+    }
+
+    override suspend fun removeMember(id: Long, userId: Long): Result<ConversationDto> = executeRequest {
+        client.delete("$baseUrl/conversations/$id/members/$userId") {
             headers { authHeader().forEach { (k, v) -> append(k, v) } }
         }
     }
@@ -220,11 +251,53 @@ class ApiServiceImpl(
         }
     }
 
-    override suspend fun getMessages(conversationId: Long, cursor: Long?, limit: Int): Result<MessagePageDto> = executeRequest {
+    override suspend fun getMessages(conversationId: Long, cursor: String?, limit: Int): Result<MessagePageDto> = executeRequest {
         client.get("$baseUrl/conversations/$conversationId/messages") {
             headers { authHeader().forEach { (k, v) -> append(k, v) } }
-            if (cursor != null) parameter("cursor", cursor.toString())
+            // Opaque keyset cursor ("<micros>:<id>") echoed back verbatim.
+            if (!cursor.isNullOrEmpty()) parameter("cursor", cursor)
             parameter("limit", limit.toString())
+        }
+    }
+
+    // E2EE keys — device-scoped: the server takes the device id from the access
+    // token, never from the body, so these publish only for the logged-in device.
+    override suspend fun publishIdentityKey(request: PublishIdentityRequest): Result<Unit> = executeRequest {
+        client.put("$baseUrl/keys/identity") {
+            headers { authHeader().forEach { (k, v) -> append(k, v) } }
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }
+    }
+
+    override suspend fun publishSignedPreKey(request: PublishSignedPreKeyRequest): Result<Unit> = executeRequest {
+        client.put("$baseUrl/keys/signed-prekey") {
+            headers { authHeader().forEach { (k, v) -> append(k, v) } }
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }
+    }
+
+    override suspend fun publishOneTimePreKeys(request: PublishOneTimePreKeysRequest): Result<Int> = executeRequest {
+        client.post("$baseUrl/keys/one-time-prekeys") {
+            headers { authHeader().forEach { (k, v) -> append(k, v) } }
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }
+    }
+
+    override suspend fun getUnclaimedPreKeyCount(): Result<Long> {
+        // The intermediate type is declared explicitly: leaving it to inference
+        // from the expected Result<Long> would make kotlinx try to decode the
+        // JSON object straight into a Long.
+        val response: Result<PreKeyCountResponse> = executeRequest {
+            client.get("$baseUrl/keys/count") {
+                headers { authHeader().forEach { (k, v) -> append(k, v) } }
+            }
+        }
+        return when (response) {
+            is Result.Success -> Result.success(response.data.unclaimed)
+            is Result.Failure -> Result.failure(response.exception)
         }
     }
 

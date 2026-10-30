@@ -122,6 +122,8 @@ data class UserSettings(
 data class ConversationDto(
     val id: Long,
     val type: String,
+    // Present for groups, absent for direct conversations (the server omits it).
+    val name: String? = null,
     val participants: List<ConversationParticipantDto>,
     val last_message: MessagePreviewDto? = null,
     val unread_count: Int,
@@ -137,7 +139,9 @@ data class ConversationParticipantDto(
     val display_name: String,
     val username: String? = null,
     val profile_image_id: Long? = null,
-    val is_online: Boolean = false
+    val is_online: Boolean = false,
+    // Unix millis; the server omits it when the column is NULL.
+    val last_seen: Long? = null
 )
 
 // Server-side MessagePreviewResponse: a trimmed projection of a message —
@@ -146,6 +150,8 @@ data class ConversationParticipantDto(
 data class MessagePreviewDto(
     val id: Long,
     val sender_id: Long,
+    // Author's display name: a group's list row shows "Alice: hi".
+    val sender_name: String? = null,
     val type: String,
     val text: String? = null,
     val status: String,
@@ -155,7 +161,47 @@ data class MessagePreviewDto(
 @Serializable
 data class CreateConversationRequest(
     val participant_phone: String? = null,
-    val participant_id: Long? = null
+    val participant_id: Long? = null,
+    // Group creation: "group" plus a name and the OTHER members' ids. The server
+    // adds the caller as a participant automatically.
+    val type: String? = null,
+    val name: String? = null,
+    val participant_ids: List<Long>? = null
+)
+
+@Serializable
+data class RenameConversationRequest(
+    val name: String
+)
+
+@Serializable
+data class AddMembersRequest(
+    val participant_ids: List<Long>
+)
+
+// E2EE key DTOs. ByteArray fields are standard base64 on the wire, matching the
+// Go server's []byte JSON encoding.
+@Serializable
+data class PublishIdentityRequest(
+    val identity_key: ByteArray,
+    val registration_id: Int
+)
+
+@Serializable
+data class PublishSignedPreKeyRequest(
+    val key_id: Int,
+    val public_key: ByteArray,
+    val identity_key_signature: ByteArray
+)
+
+@Serializable
+data class PublishOneTimePreKeysRequest(
+    val keys: Map<Int, ByteArray>
+)
+
+@Serializable
+data class PreKeyCountResponse(
+    val unclaimed: Long = 0
 )
 
 // Message DTOs
@@ -167,6 +213,9 @@ data class MessageDto(
     val id: Long,
     val conversation_id: Long,
     val sender_id: Long,
+    // Author's display name, present for group chats so a message can be
+    // attributed without a lookup.
+    val sender_name: String? = null,
     val type: String,
     val text: String? = null,
     val media: MediaDto? = null,
@@ -182,7 +231,10 @@ data class MessageDto(
 @Serializable
 data class MessagePageDto(
     val messages: List<MessageDto>,
-    val next_cursor: Long? = null,
+    // Opaque keyset cursor "<created_at_micros>:<id>", echoed back verbatim.
+    // Was a Long Unix-seconds timestamp, which made the server skip every
+    // message sharing the boundary second.
+    val next_cursor: String? = null,
     val has_more: Boolean
 )
 

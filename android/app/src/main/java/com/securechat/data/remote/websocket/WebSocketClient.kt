@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.serialization.*
 import kotlinx.serialization.json.*
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.random.Random
 
 @Serializable
 sealed interface WsEvent {
@@ -138,6 +139,16 @@ class WebSocketManager(
     private val sessionActive = AtomicBoolean(false)
     private var connectionJob: Job? = null
 
+    /**
+     * A frame handed to the writer that the socket refused.
+     *
+     * `for (event in queue)` removes an element before the send is attempted, so
+     * a failed write destroyed the frame. Holding it here lets the next session
+     * resend it instead of silently losing a message.
+     */
+    @Volatile
+    private var inFlight: WsEvent? = null
+
     val events: SharedFlow<WsEvent> = _events.asSharedFlow()
     val state: StateFlow<ConnectionState> = _state.asStateFlow()
     val connected: Boolean
@@ -167,13 +178,24 @@ class WebSocketManager(
             _state.value = if (backoffMs > 0) ConnectionState.RECONNECTING else ConnectionState.CONNECTING
             try {
                 runSession(token)
-                backoffMs = if (backoffMs == 0L) 1_000L else minOf(backoffMs * 2, 30_000L)
+                backoffMs = nextBackoff(backoffMs)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                backoffMs = if (backoffMs == 0L) 1_000L else minOf(backoffMs * 2, 30_000L)
+                backoffMs = nextBackoff(backoffMs)
             }
         }
+    }
+
+    /**
+     * Exponential backoff with full jitter. Without jitter every client that lost
+     * the same server reconnects in lockstep, which is exactly the traffic spike
+     * that keeps it down.
+     */
+    private fun nextBackoff(current: Long): Long {
+        val base = if (current <= 0L) 1_000L else minOf(current * 2, 30_000L)
+        val half = base / 2
+        return half + Random.nextLong(half + 1)
     }
 
     private suspend fun runSession(token: String) {
@@ -208,11 +230,21 @@ class WebSocketManager(
                 // Writer: the single consumer of the outbound queue. Anything
                 // queued while offline is flushed here on reconnect.
                 val writer = launch {
-                    for (event in outboundQueue) {
+                    while (isActive) {
+                        // Retry a frame a previous session could not deliver
+                        // before taking anything new from the queue.
+                        val event = inFlight
+                            ?: outboundQueue.receiveCatching().getOrNull()
+                            ?: break
                         try {
                             send(Frame.Text(json.encodeToString(event)))
+                            inFlight = null
                         } catch (_: Exception) {
-                            break // socket dead; the connection loop reconnects
+                            // Channel consumption already removed this frame, so
+                            // stash it for the next session rather than dropping
+                            // it, then let the connection loop reconnect.
+                            inFlight = event
+                            break
                         }
                     }
                 }
@@ -274,11 +306,16 @@ class WebSocketManager(
         started.set(false)
         connectionJob?.cancel()
         connectionJob = null
+        inFlight = null
         // Drain anything queued so a later restart doesn't replay stale sends.
         while (true) {
             val r = outboundQueue.tryReceive()
             if (r.isFailure) break
         }
+        // Cancel the scope's remaining children (reader/writer/socket) — this
+        // was previously never cancelled, so every logged-out session leaked its
+        // coroutines and left the socket open.
+        scope.coroutineContext.cancelChildren()
         sessionActive.set(false)
         _state.value = ConnectionState.DISCONNECTED
     }

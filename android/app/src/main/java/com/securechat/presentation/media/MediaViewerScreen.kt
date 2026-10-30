@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.PlayCircleFilled
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -41,9 +42,10 @@ import com.securechat.presentation.theme.Theme
 fun MediaViewerScreen(
     media: Media,
     onClose: () -> Unit,
-    onDownload: () -> Unit
+    onDownload: () -> Unit,
+    statusMessage: String? = null,
+    downloadProgress: Int? = null
 ) {
-    val isLoading by remember { mutableStateOf(false) }
     val scale by remember { mutableStateOf(1f) }
     
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
@@ -69,12 +71,37 @@ fun MediaViewerScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "Video Player\n${media.originalFilename}",
-                        textAlign = TextAlign.Center,
-                        color = Color.White,
-                        fontSize = 18.sp
+                    // The eager transformation signed at upload produced a poster
+                    // frame; showing it is honest about what is on screen instead
+                    // of a text placeholder pretending to be a player.
+                    AsyncImage(
+                        model = media.thumbnailUrl ?: media.secureUrl,
+                        contentDescription = media.originalFilename,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize()
                     )
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayCircleFilled,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(64.dp)
+                        )
+                        Text(
+                            text = media.originalFilename,
+                            color = Color.White,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "Download to play",
+                            color = Color.White.copy(alpha = 0.7f),
+                            fontSize = 12.sp
+                        )
+                    }
                 }
             }
             
@@ -157,6 +184,26 @@ fun MediaViewerScreen(
                     )
                 }
             }
+        }
+
+        // Download feedback: progress while it runs, then the result.
+        if (downloadProgress != null) {
+            androidx.compose.material3.LinearProgressIndicator(
+                progress = { downloadProgress / 100f },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            )
+        } else if (statusMessage != null) {
+            Text(
+                text = statusMessage,
+                color = Color.White,
+                fontSize = 12.sp,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(24.dp)
+            )
         }
     }
 }

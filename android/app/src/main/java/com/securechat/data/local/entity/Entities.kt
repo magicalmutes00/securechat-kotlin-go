@@ -80,6 +80,8 @@ data class ConversationEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val serverId: Long? = null,
     val type: String = "direct",
+    /** Group title; null for direct conversations, whose title is derived. */
+    val name: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )
@@ -96,7 +98,11 @@ data class ConversationParticipantEntity(
     val conversationId: Long,
     val userId: Long,
     val joinedAt: Long = System.currentTimeMillis(),
-    val leftAt: Long? = null
+    val leftAt: Long? = null,
+    /** Mirrors users.is_online; kept per-participant so a chat header reads locally. */
+    val isOnline: Boolean = false,
+    /** Unix millis of the last activity, 0 when unknown. */
+    val lastSeen: Long = 0L
 )
 
 @Entity(
@@ -115,6 +121,8 @@ data class MessageEntity(
     val serverId: Long? = null,
     val conversationId: Long,
     val senderId: Long,
+    /** Author's display name, cached so group messages keep their author offline. */
+    val senderName: String? = null,
     val type: String,
     val text: String? = null,
     val mediaId: Long? = null,

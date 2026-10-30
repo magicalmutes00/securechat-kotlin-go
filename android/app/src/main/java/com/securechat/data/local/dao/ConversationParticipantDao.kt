@@ -36,4 +36,20 @@ interface ConversationParticipantDao {
 
     @Query("DELETE FROM conversation_participants")
     suspend fun deleteAll(): Int
+
+    /**
+     * Applies a presence change to every row for [userId], across all
+     * conversations they are in. USER_ONLINE / USER_OFFLINE carry only a user id
+     * (they are process-wide broadcasts), so the update is keyed on the user and
+     * naturally covers every chat they appear in.
+     *
+     * Guarded by `isOnline != :isOnline` so a redundant event does not touch any
+     * row — and therefore does not invalidate Room flows for no reason.
+     */
+    @Query(
+        "UPDATE conversation_participants " +
+        "SET isOnline = :isOnline, lastSeen = :lastSeen " +
+        "WHERE userId = :userId AND isOnline != :isOnline"
+    )
+    suspend fun updatePresence(userId: Long, isOnline: Boolean, lastSeen: Long): Int
 }
