@@ -45,7 +45,9 @@ android/app/.cxx/
 android/app/release/
 android/app/debug/
 android/.gradle/
-android/gradle/wrapper/gradle-wrapper.jar
+# NOTE: gradle-wrapper.jar must stay tracked — without it `./gradlew` cannot
+# start on a fresh clone or in CI ("Could not find or load main class
+# org.gradle.wrapper.GradleWrapperMain").
 android/local.properties
 android/*.keystore
 android/*.jks
