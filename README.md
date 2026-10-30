@@ -38,8 +38,10 @@ A production-quality private messaging application with end-to-end encryption, o
 - **Optional AI**: Ollama integration for smart features (planned)
 
 > **Note:** End-to-end message encryption is not implemented yet — traffic is
-> protected in transit with TLS/WSS. See the development phases below for
-> the current implementation status.
+> protected in transit with TLS/WSS. The Signal Protocol design (X3DH + Double
+> Ratchet, client-side crypto with the server as a blind relay) is specified in
+> [docs/e2ee-design.md](docs/e2ee-design.md), and phase E1 (the prekey
+> directory) is implemented. See the development phases below.
 
 ## Quick Start
 
@@ -121,6 +123,10 @@ securechat/
 │   └── go.mod
 │
 ├── docs/                    # Documentation
+│   ├── api-spec.md
+│   ├── database-schema.md
+│   ├── websocket-protocol.md
+│   ├── e2ee-design.md
 │   └── deployment/
 │       ├── android-config.md
 │       ├── linux-setup.md
@@ -139,16 +145,28 @@ securechat/
 | 3 | Go Backend Foundation (Fiber, Config, Logging) | ✅ Complete |
 | 4 | PostgreSQL Schema & Repositories | ✅ Complete |
 | 5 | Authentication (OTP, JWT, Keystore) | ✅ Complete |
-| 6 | WebSocket Infrastructure | 🔶 Wired, needs integration testing |
-| 7 | Chat Core (Conversations, Messages) | 🔶 Core flows wired, UI polish pending |
-| 8 | Room & Offline Sync | 🔶 Partial (pending-ops queue unused) |
-| 9 | Cloudinary Media | 🔶 Backend done, Android UI wiring pending |
-| 10 | Chat Media UI | 📋 Planned |
+| 6 | WebSocket Infrastructure | ✅ Complete (integration-tested) |
+| 7 | Chat Core (Conversations, Messages) | ✅ Complete |
+| 8 | Room & Offline Sync | 🔶 Attachments and read receipts queue durably and retry with backoff; text sends rely on the socket's outbound queue |
+| 9 | Cloudinary Media | ✅ End-to-end (sign → upload → complete → send) |
+| 10 | Chat Media UI | ✅ Picker, progress/cancel/retry, image bubbles, viewers (video is download-and-open; no in-app player) |
 | 11 | Notifications | 📋 Planned |
 | 12 | Ollama AI | 📋 Planned |
-| 13 | Security Hardening | 🔶 Baseline done (rate limiting, session checks) |
-| 14 | Testing | 📋 Planned |
+| 13 | Security Hardening | ✅ Hardened (atomic OTP, rotation CAS, session checks) |
+| 14 | Testing | 🔶 Go unit/integration suites + Android unit tests present |
 | 15 | Deployment | 🔶 Render config present |
+| E1 | E2EE prekey directory (server) | ✅ Complete |
+| E2 | E2EE X3DH + Double Ratchet (1:1) | 📋 Planned |
+| E3 | E2EE plaintext cutover | 📋 Planned |
+
+> **Media contract.** Attachments have a single path: upload to Cloudinary via a
+> backend-signed request, register the asset with `POST /media/complete`, then
+> send an ordinary `MESSAGE_SEND` carrying `media_id`. Message payloads embed the
+> full `media` object (REST and WebSocket alike) because `GET /media/:id` is
+> owner-scoped and a recipient could not otherwise resolve a bare id. See
+> [docs/api-spec.md](docs/api-spec.md) and
+> [docs/websocket-protocol.md](docs/websocket-protocol.md).
+
 
 ## Technology Stack
 
@@ -214,6 +232,13 @@ GET    /api/v1/media/:id
 Devices:
 GET    /api/v1/devices
 DELETE /api/v1/devices/:id
+
+E2EE Keys (public key material only):
+PUT    /api/v1/keys/identity
+PUT    /api/v1/keys/signed-prekey
+POST   /api/v1/keys/one-time-prekeys
+GET    /api/v1/keys/count
+POST   /api/v1/keys/claim
 
 WebSocket: /ws
 ```
