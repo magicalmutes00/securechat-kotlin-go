@@ -45,6 +45,9 @@ android/app/.cxx/
 android/app/release/
 android/app/debug/
 android/.gradle/
+# Kotlin compiler session markers: transient files written per build, and the
+# `.salive` marker was tracked by mistake before this rule existed.
+android/.kotlin/
 # NOTE: gradle-wrapper.jar must stay tracked — without it `./gradlew` cannot
 # start on a fresh clone or in CI ("Could not find or load main class
 # org.gradle.wrapper.GradleWrapperMain").
