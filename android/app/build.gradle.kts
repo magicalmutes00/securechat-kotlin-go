@@ -27,8 +27,12 @@ android {
         applicationId = "com.trisentricai.securechat"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 1
-        versionName = "1.0.0"
+        // versionCode is monotonic: the device already carries a build with code
+        // 5, and Android refuses to install anything lower unless the app is
+        // uninstalled first (losing local data). Bump this before every install
+        // that must replace an existing one.
+        versionCode = 6
+        versionName = "1.0.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
