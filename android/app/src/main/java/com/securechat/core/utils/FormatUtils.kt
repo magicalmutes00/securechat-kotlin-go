@@ -5,6 +5,31 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
+/**
+ * Compact relative time for the conversation list: "2m", "18m", "1h", "3h",
+ * "1d", "2d", then a date.
+ *
+ * Deliberately terser than [formatTimestamp]: the inbox row has room for about
+ * four characters beside the badge, and "2m ago" would wrap.
+ */
+fun Long.formatListTimestamp(): String {
+    val diff = System.currentTimeMillis() - this
+    val minutes = diff / TimeUnit.MINUTES.toMillis(1)
+    val hours = diff / TimeUnit.HOURS.toMillis(1)
+    val days = diff / TimeUnit.DAYS.toMillis(1)
+    return when {
+        minutes < 1 -> "now"
+        minutes < 60 -> "${minutes}m"
+        hours < 24 -> "${hours}h"
+        days < 7 -> "${days}d"
+        else -> SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(this))
+    }
+}
+
+fun Long.formatClockTime(): String =
+    // 24-hour so it matches the design's "09:41" and does not grow the bubble.
+    SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(this))
+
 fun Long.formatTimestamp(): String {
     val date = Date(this)
     val now = Date()

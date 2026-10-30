@@ -16,38 +16,39 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DoneAll
-import androidx.compose.material.icons.filled.Error
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.PlayCircleFilled
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Send
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,23 +59,26 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import com.securechat.R
-import com.securechat.core.utils.formatTimestamp
 import com.securechat.core.utils.UserSession
+import com.securechat.core.utils.formatClockTime
+import com.securechat.core.utils.formatFileSize
 import com.securechat.domain.model.Media
 import com.securechat.domain.model.Message
 import com.securechat.domain.model.MessageStatus
 import com.securechat.domain.model.MessageType
 import com.securechat.presentation.components.Avatar
-import com.securechat.presentation.theme.Theme
-import kotlinx.coroutines.CoroutineScope
+import com.securechat.presentation.components.DatePill
+import com.securechat.presentation.components.SignalIconButton
+import com.securechat.presentation.components.TypingDots
+import com.securechat.presentation.theme.Skin
+import com.securechat.presentation.theme.SkinType
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -86,10 +90,6 @@ fun ChatScreen(
     onBack: () -> Unit,
     onConversationLeft: () -> Unit = {},
     onAddMembers: () -> Unit = {},
-    /**
-     * Opens an attachment full-screen. [isDocument] picks the viewer: a PDF needs
-     * file actions (download/share), an image or video needs a canvas.
-     */
     onOpenMedia: (mediaId: Long, isDocument: Boolean) -> Unit = { _, _ -> }
 ) {
     val viewModel: ChatViewModel = androidx.hilt.navigation.compose.hiltViewModel()
@@ -97,9 +97,14 @@ fun ChatScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var attachError by remember { mutableStateOf<String?>(null) }
+    var showGroupMenu by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var showLeaveDialog by remember { mutableStateOf(false) }
 
-    // Photo Picker: no storage permission, and the user only ever grants access to
-    // what they pick. Documents go through SAF for the same reason.
+    androidx.compose.runtime.LaunchedEffect(conversationId) {
+        viewModel.initialize(conversationId, UserSession.currentUserId)
+    }
+
     val pickPhoto = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
     ) { uri ->
@@ -113,158 +118,100 @@ fun ChatScreen(
         scope.launch { attachError = stageAttachment(context, uri, viewModel) }
     }
 
-    // Load history and mark the conversation read once per conversation entry.
-    androidx.compose.runtime.LaunchedEffect(conversationId) {
-        viewModel.initialize(conversationId, UserSession.currentUserId)
-    }
+    val messages = viewModel.messages.value
+    val isGroup = viewModel.isGroup.value
+    val title = viewModel.conversationName.value ?: otherUserName
 
-    // Group actions. The title updates in place after a rename because the
-    // ViewModel re-reads the conversation row from Room.
-    var showGroupMenu by remember { mutableStateOf(false) }
-    var showRenameDialog by remember { mutableStateOf(false) }
-    var showLeaveDialog by remember { mutableStateOf(false) }
+    Column(modifier = Modifier.fillMaxSize().background(Skin.Void)) {
+        ConversationHeader(
+            title = title,
+            avatarUrl = otherUserAvatar,
+            online = viewModel.presenceText.value.startsWith("Online"),
+            statusText = if (viewModel.isAnyoneTyping) "typing…" else viewModel.presenceText.value,
+            typing = viewModel.isAnyoneTyping,
+            showMenu = isGroup,
+            onBack = onBack,
+            onMenu = { showGroupMenu = true }
+        )
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        // Top App Bar
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
-                .height(56.dp),
-            contentAlignment = Alignment.CenterStart
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(
-                    imageVector = Icons.Default.ArrowBack,
-                    contentDescription = "Back"
-                )
-            }
-            
-            Column(
-                modifier = Modifier.padding(start = 56.dp),
-                verticalArrangement = Arrangement.Center
-            ) {
-                Text(
-                    text = viewModel.conversationName.value ?: otherUserName,
-                    fontSize = 18.sp,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
-                )
-                Text(
-                    // Typing wins over presence: it is the more urgent signal, and
-                    // the two would otherwise fight for the same line.
-                    text = if (viewModel.isAnyoneTyping) {
-                        "typing\u2026"
-                    } else {
-                        viewModel.presenceText.value.ifBlank {
-                            if (viewModel.isGroup.value) "0 members" else ""
-                        }
-                    },
-                    fontSize = 12.sp,
-                    color = if (viewModel.isAnyoneTyping) {
-                        androidx.compose.material3.MaterialTheme.colorScheme.primary
-                    } else {
-                        androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
-                    }
-                )
-            }
-            
-            Avatar(url = otherUserAvatar, name = otherUserName, modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(end = 16.dp)
-                .size(40.dp))
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Skin.Line))
 
-            // Group actions: rename and leave. A 1:1 chat has neither.
-            if (viewModel.isGroup.value) {
-                IconButton(
-                    onClick = { showGroupMenu = true },
-                    modifier = Modifier.align(Alignment.CenterEnd)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.MoreVert,
-                        contentDescription = "Group options"
-                    )
-                }
-                DropdownMenu(expanded = showGroupMenu, onDismissRequest = { showGroupMenu = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Add members") },
-                        onClick = {
-                            showGroupMenu = false
-                            onAddMembers()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Rename group") },
-                        onClick = {
-                            showGroupMenu = false
-                            showRenameDialog = true
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Leave group") },
-                        onClick = {
-                            showGroupMenu = false
-                            showLeaveDialog = true
-                        }
-                    )
-                }
-            }
-        }
-        
-        Spacer(modifier = Modifier.padding(8.dp))
-
-        // Message List — weight(1f) so the list takes only the space left
-        // after the input row below; fillMaxSize would consume the column's
-        // remaining height and push MessageInput off-screen entirely.
         LazyColumn(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
+            modifier = Modifier.weight(1f).fillMaxWidth(),
             reverseLayout = true,
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            items(viewModel.messages.value.reversed()) { message ->
-                val isOwn = message.senderId == viewModel.currentUserId
-                MessageBubble(
+            // reverseLayout draws the last item at the top, so the date pill is
+            // added last in order to appear above the history.
+            items(messages.reversed(), key = { it.id }) { message ->
+                MessageRow(
                     message = message,
-                    isOwn = isOwn,
-                    // Only a group attributes its messages: with two participants
-                    // a name above every bubble is noise.
-                    showSenderName = viewModel.isGroup.value && !isOwn,
+                    isOwn = message.senderId == viewModel.currentUserId,
+                    showAuthor = isGroup && message.senderId != viewModel.currentUserId,
                     onRetry = { viewModel.retryMessage(message.id) },
-                    onDelete = { viewModel.deleteMessage(message.id) },
                     onMediaClick = { media ->
                         onOpenMedia(media.id, message.type == MessageType.DOCUMENT)
                     }
                 )
             }
+
+            if (viewModel.isAnyoneTyping) {
+                item(key = "typing") {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .clip(Skin.BubbleIn)
+                                .background(Skin.Primary)
+                                .padding(horizontal = 16.dp, vertical = 12.dp)
+                        ) {
+                            TypingDots()
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Text(text = "typing…", style = SkinType.Typing, color = Skin.InkFaint)
+                    }
+                }
+            }
+
+            if (messages.isNotEmpty()) {
+                item(key = "date") {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        DatePill("Today")
+                    }
+                }
+            }
         }
 
-        // Attachment in flight: progress, or a failure the user can act on.
         viewModel.attachmentSend.value?.let { state ->
-            AttachmentSendBanner(
-                state = state,
+            AttachmentBanner(
+                fileName = state.fileName,
+                progress = state.progress,
+                failed = state.failed,
+                error = state.error,
                 onCancel = { viewModel.cancelAttachment() },
                 onRetry = { viewModel.retryAttachment() }
             )
         }
 
-        attachError?.let { message ->
+        attachError?.let { error ->
             Text(
-                text = message,
-                color = androidx.compose.material3.MaterialTheme.colorScheme.error,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
+                text = error,
+                style = SkinType.Subline,
+                color = Skin.Error,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
             )
         }
 
-        // Message Input
-        MessageInput(
+        Composer(
             text = messageText,
+            placeholder = "Message ${title.substringBefore(' ')}…",
             onTextChange = {
                 messageText = it
-                // Signals the other side; throttled inside the ViewModel.
                 if (it.isNotBlank()) viewModel.onUserTyping()
             },
             onSend = {
@@ -280,16 +227,32 @@ fun ChatScreen(
             },
             onAttachDocument = {
                 attachError = null
-                // "*/*" rather than a list of MIME types: a legitimately untyped
-                // file would otherwise never appear in the picker.
                 pickDocument.launch(arrayOf("*/*"))
             }
         )
     }
 
+    if (showGroupMenu) {
+        GroupMenu(
+            onDismiss = { showGroupMenu = false },
+            onAddMembers = {
+                showGroupMenu = false
+                onAddMembers()
+            },
+            onRename = {
+                showGroupMenu = false
+                showRenameDialog = true
+            },
+            onLeave = {
+                showGroupMenu = false
+                showLeaveDialog = true
+            }
+        )
+    }
+
     if (showRenameDialog) {
-        RenameGroupDialog(
-            currentName = viewModel.conversationName.value ?: otherUserName,
+        RenameDialog(
+            currentName = title,
             onDismiss = { showRenameDialog = false },
             onConfirm = { newName ->
                 showRenameDialog = false
@@ -299,305 +262,544 @@ fun ChatScreen(
     }
 
     if (showLeaveDialog) {
-        androidx.compose.material3.AlertDialog(
+        AlertDialog(
             onDismissRequest = { showLeaveDialog = false },
-            title = { Text("Leave group") },
+            containerColor = Skin.SurfaceCard,
+            titleContentColor = Skin.Ink,
+            textContentColor = Skin.InkDim,
+            title = { Text("Leave group", style = SkinType.Title) },
             text = { Text("You will no longer receive messages from this group.") },
             confirmButton = {
-                androidx.compose.material3.TextButton(onClick = {
+                TextButton(onClick = {
                     showLeaveDialog = false
                     viewModel.leaveGroup(onConversationLeft)
-                }) {
-                    Text("Leave", color = androidx.compose.material3.MaterialTheme.colorScheme.error)
-                }
+                }) { Text("Leave", color = Skin.Error) }
             },
             dismissButton = {
-                androidx.compose.material3.TextButton(onClick = { showLeaveDialog = false }) {
-                    Text("Cancel")
+                TextButton(onClick = { showLeaveDialog = false }) {
+                    Text("Cancel", color = Skin.InkDim)
                 }
             }
         )
     }
 }
 
+/**
+ * Header: back chevron, gradient avatar, name and a status line that turns lime
+ * while the other side is online or typing — the design's "online · encrypted".
+ */
 @Composable
-private fun RenameGroupDialog(
-    currentName: String,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
+private fun ConversationHeader(
+    title: String,
+    avatarUrl: String?,
+    online: Boolean,
+    statusText: String,
+    typing: Boolean,
+    showMenu: Boolean,
+    onBack: () -> Unit,
+    onMenu: () -> Unit
 ) {
-    var value by remember { mutableStateOf(currentName) }
-
-    androidx.compose.material3.AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Rename group") },
-        text = {
-            androidx.compose.material3.OutlinedTextField(
-                value = value,
-                onValueChange = { value = it },
-                singleLine = true,
-                label = { Text("Group name") }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 8.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier.size(40.dp).clip(CircleShape).clickable { onBack() },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "Back",
+                tint = Skin.Ink,
+                modifier = Modifier.size(20.dp)
             )
-        },
-        confirmButton = {
-            androidx.compose.material3.TextButton(
-                onClick = { if (value.isNotBlank()) onConfirm(value.trim()) }
-            ) {
-                Text("Rename")
-            }
-        },
-        dismissButton = {
-            androidx.compose.material3.TextButton(onClick = onDismiss) {
-                Text("Cancel")
+        }
+
+        Avatar(url = avatarUrl, name = title, size = 38, initialsSize = 10)
+        Spacer(Modifier.width(10.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = SkinType.HeaderName,
+                color = Skin.Ink,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = statusText.ifBlank { "offline" },
+                    style = SkinType.HeaderStatus,
+                    color = if (online || typing) Skin.Signal else Skin.InkDim
+                )
+                Spacer(Modifier.width(6.dp))
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = null,
+                    tint = Skin.InkDim,
+                    modifier = Modifier.size(9.dp)
+                )
+                Spacer(Modifier.width(3.dp))
+                Text(text = "encrypted", style = SkinType.HeaderMeta, color = Skin.InkDim)
             }
         }
-    )
+
+        if (showMenu) {
+            Box(
+                modifier = Modifier.size(40.dp).clip(CircleShape).clickable { onMenu() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.MoreVert,
+                    contentDescription = "Group options",
+                    tint = Skin.InkDim,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
 }
 
+/** A message, with the author's avatar and name when it is a group run. */
 @Composable
-fun MessageBubble(
+private fun MessageRow(
     message: Message,
     isOwn: Boolean,
-    showSenderName: Boolean = false,
+    showAuthor: Boolean,
     onRetry: () -> Unit,
-    onDelete: () -> Unit,
-    onMediaClick: (Media) -> Unit = {}
+    onMediaClick: (Media) -> Unit
 ) {
-    val statusColor = when (message.status) {
-        MessageStatus.PENDING, MessageStatus.SENDING -> androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
-        MessageStatus.SENT -> androidx.compose.material3.MaterialTheme.colorScheme.primary
-        MessageStatus.DELIVERED -> androidx.compose.material3.MaterialTheme.colorScheme.primary
-        MessageStatus.READ -> androidx.compose.material3.MaterialTheme.colorScheme.primary
-        MessageStatus.FAILED -> androidx.compose.material3.MaterialTheme.colorScheme.error
-    }
-
-    val bubbleColor = if (isOwn) {
-        androidx.compose.material3.MaterialTheme.colorScheme.primaryContainer
-    } else {
-        androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant
-    }
-
-    val textColor = if (isOwn) {
-        androidx.compose.material3.MaterialTheme.colorScheme.onPrimaryContainer
-    } else {
-        androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
-    }
-
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (isOwn) Arrangement.End else Arrangement.Start
     ) {
-        Box(
-            modifier = Modifier
-                .widthIn(min = 0.dp, max = 280.dp)
-                .padding(vertical = 4.dp),
-            contentAlignment = if (isOwn) Alignment.TopEnd else Alignment.TopStart
+        if (!isOwn && showAuthor) {
+            Avatar(url = null, name = message.senderName ?: "?", size = 28, initialsSize = 9)
+            Spacer(Modifier.width(8.dp))
+        }
+
+        Column(
+            modifier = Modifier.widthIn(max = 300.dp),
+            horizontalAlignment = if (isOwn) Alignment.End else Alignment.Start
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(bubbleColor, RoundedCornerShape(16.dp))
-                    .padding(12.dp)
-            ) {
-                // Author line: group messages only, and only for other people.
-                val authorName = message.senderName
-                if (showSenderName && !authorName.isNullOrBlank()) {
-                    Text(
-                        text = authorName,
-                        color = senderNameColor(message.senderId),
-                        fontSize = 12.sp,
-                        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
-                    )
-                    Spacer(Modifier.height(2.dp))
-                }
+            if (showAuthor && !message.senderName.isNullOrBlank()) {
+                Text(
+                    text = message.senderName.orEmpty(),
+                    style = SkinType.Meta,
+                    color = Skin.InkDim,
+                    modifier = Modifier.padding(start = 6.dp, bottom = 3.dp)
+                )
+            }
 
-                // Message content based on type
-                when (message.type) {
-                    MessageType.TEXT -> {
-                        message.text?.let { text ->
-                            Text(
-                                text = text,
-                                color = textColor,
-                                fontSize = 16.sp
-                            )
-                        }
-                    }
-                    MessageType.IMAGE -> {
-                        message.media?.let { media ->
-                            // The real asset. This used to draw the launcher icon
-                            // as a placeholder and ignore media.secureUrl entirely,
-                            // so every image looked identical.
-                            AsyncImage(
-                                model = media.secureUrl.ifBlank { media.thumbnailUrl },
-                                contentDescription = media.originalFilename,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(200.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable { onMediaClick(media) },
-                                contentScale = ContentScale.Crop
-                            )
-                        }
-                    }
-                    MessageType.VIDEO -> {
-                        message.media?.let { media ->
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(200.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color.Black)
-                                    .clickable { onMediaClick(media) }
-                            ) {
-                                // Video frames come from the eager transformation the
-                                // backend signs at upload; the full file plays in
-                                // the viewer.
-                                AsyncImage(
-                                    model = media.thumbnailUrl ?: media.secureUrl,
-                                    contentDescription = media.originalFilename,
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Crop
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.PlayCircleFilled,
-                                    contentDescription = "Play video",
-                                    tint = Color.White,
-                                    modifier = Modifier.align(Alignment.Center).size(48.dp)
-                                )
-                            }
-                        }
-                    }
-                    MessageType.AUDIO -> {
-                        message.media?.let { media ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable { onMediaClick(media) },
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.PlayArrow,
-                                    contentDescription = "Play audio",
-                                    tint = textColor
-                                )
-                                Spacer(modifier = Modifier.padding(8.dp))
-                                Text(
-                                    text = media.originalFilename.ifBlank { "Audio message" },
-                                    color = textColor
-                                )
-                            }
-                        }
-                    }
-                    MessageType.DOCUMENT -> {
-                        message.media?.let { media ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable { onMediaClick(media) },
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.InsertDriveFile,
-                                    contentDescription = "Document",
-                                    tint = textColor
-                                )
-                                Spacer(modifier = Modifier.padding(8.dp))
-                                Column {
-                                    Text(text = media.originalFilename, color = textColor)
-                                    Text(text = "${(media.fileSize / 1024)} KB", color = textColor.copy(alpha = 0.7f), fontSize = 12.sp)
-                                }
-                            }
-                        }
-                    }
-                }
+            when (message.type) {
+                MessageType.DOCUMENT -> message.media?.let {
+                    FileBubble(it, message, isOwn, onMediaClick)
+                } ?: TextBubble(message, isOwn, onRetry)
 
-                // Timestamp and status
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    Text(
-                        text = message.createdAt.formatTimestamp(),
-                        color = textColor.copy(alpha = 0.6f),
-                        fontSize = 10.sp
-                    )
-                    
-                    if (isOwn) {
-                        Spacer(modifier = Modifier.padding(4.dp))
-                        Icon(
-                            imageVector = when (message.status) {
-                                MessageStatus.PENDING, MessageStatus.SENDING -> Icons.Default.AccessTime
-                                MessageStatus.SENT -> Icons.Default.Check
-                                MessageStatus.DELIVERED -> Icons.Default.DoneAll
-                                MessageStatus.READ -> Icons.Default.DoneAll
-                                MessageStatus.FAILED -> Icons.Default.Error
-                            },
-                            contentDescription = "Message status",
-                            tint = statusColor,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        
-                        if (message.status == MessageStatus.FAILED) {
-                            IconButton(
-                                onClick = onRetry,
-                                modifier = Modifier.padding(start = 4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Refresh,
-                                    contentDescription = "Retry",
-                                    tint = androidx.compose.material3.MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        }
-                    }
-                }
+                MessageType.AUDIO -> VoiceBubble(message, isOwn, onMediaClick)
+
+                MessageType.IMAGE, MessageType.VIDEO -> message.media?.let {
+                    MediaBubble(it, message, isOwn, onMediaClick)
+                } ?: TextBubble(message, isOwn, onRetry)
+
+                MessageType.TEXT -> TextBubble(message, isOwn, onRetry)
             }
         }
     }
 }
 
+/** Plain text bubble: blue incoming, lime outgoing, tail corner squared. */
 @Composable
-fun MessageInput(
+private fun TextBubble(message: Message, isOwn: Boolean, onRetry: () -> Unit) {
+    val shape = if (isOwn) Skin.BubbleOut else Skin.BubbleIn
+    val background = if (isOwn) Skin.Signal else Skin.Primary
+    val textColor = if (isOwn) Skin.OnSignal else Skin.OnPrimary
+    val metaColor = if (isOwn) Skin.OnSignal.copy(alpha = 0.75f) else Skin.OnPrimarySoft
+
+    Column(
+        modifier = Modifier
+            .clip(shape)
+            .background(background)
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+    ) {
+        message.text?.let {
+            Text(
+                text = it,
+                style = if (isOwn) SkinType.BubbleOut else SkinType.BubbleIn,
+                color = textColor
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        Row(
+            // End-aligned, not full-width: fillMaxWidth made the meta row claim
+            // the whole 300dp cap, so a one-word message rendered as a wide slab
+            // instead of hugging its text the way the design does.
+            modifier = Modifier.align(Alignment.End),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (isOwn) {
+                StatusGlyph(message.status, metaColor, onRetry)
+                Spacer(Modifier.width(4.dp))
+            } else {
+                // Receipt labels differ: "Delivered" is the recipient's device
+                // accepting it, "Read" is them opening the chat. Collapsing both
+                // into "Delivered" told the sender less than the status carried.
+                val receipt = when (message.status) {
+                    MessageStatus.DELIVERED -> "Delivered"
+                    MessageStatus.READ -> "Read"
+                    else -> null
+                }
+                receipt?.let {
+                    Text(it, style = SkinType.BubbleMetaIn, color = metaColor)
+                    Spacer(Modifier.width(6.dp))
+                }
+            }
+            Text(
+                text = message.createdAt.formatClockTime(),
+                style = if (isOwn) SkinType.BubbleMetaOut else SkinType.BubbleMetaIn,
+                color = metaColor
+            )
+        }
+    }
+}
+
+/** Attachment bubble: file tile, name, kind, size. Tapping opens the viewer. */
+@Composable
+private fun FileBubble(
+    media: Media,
+    message: Message,
+    isOwn: Boolean,
+    onMediaClick: (Media) -> Unit
+) {
+    val shape = if (isOwn) Skin.BubbleOut else Skin.BubbleIn
+    val background = if (isOwn) Skin.Signal else Skin.Primary
+    val textColor = if (isOwn) Skin.OnSignal else Skin.OnPrimary
+    val metaColor = if (isOwn) Skin.OnSignal.copy(alpha = 0.75f) else Skin.OnPrimarySoft
+
+    Column(
+        modifier = Modifier
+            .widthIn(min = 240.dp)
+            .clip(shape)
+            .background(background)
+            .clickable { onMediaClick(media) }
+            .padding(14.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier.size(36.dp).clip(RoundedCornerShape(9.dp)).background(Color.White),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.InsertDriveFile,
+                    contentDescription = null,
+                    tint = Skin.OnSignal,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = media.originalFilename,
+                    style = SkinType.FileName,
+                    color = textColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = "${media.mimeType.substringAfterLast('/').uppercase()} · ${formatFileSize(media.fileSize)}",
+                    style = SkinType.FileMeta,
+                    color = metaColor
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(
+            modifier = Modifier.align(Alignment.End),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (isOwn) {
+                StatusGlyph(message.status, metaColor, onRetry = {})
+                Spacer(Modifier.width(4.dp))
+            }
+            Text(
+                text = message.createdAt.formatClockTime(),
+                style = SkinType.BubbleMetaIn,
+                color = metaColor
+            )
+        }
+    }
+}
+
+/** Voice note: play disc, waveform, duration. */
+@Composable
+private fun VoiceBubble(message: Message, isOwn: Boolean, onMediaClick: (Media) -> Unit) {
+    val media = message.media
+    val shape = if (isOwn) Skin.BubbleOut else Skin.BubbleIn
+    val background = if (isOwn) Skin.Signal else Skin.Primary
+    val metaColor = if (isOwn) Skin.OnSignal.copy(alpha = 0.75f) else Skin.OnPrimarySoft
+    val barColor = if (isOwn) Skin.OnSignal else Color.White
+
+    // Fixed waveform: the message stores a duration but not samples, so any
+    // amplitude shape here would be invented. This reads as "audio", not as data.
+    val bars = listOf(8, 14, 20, 12, 22, 16, 9, 18, 12, 20, 10, 15)
+
+    Row(
+        modifier = Modifier
+            .widthIn(min = 246.dp)
+            .clip(shape)
+            .background(background)
+            .clickable { media?.let(onMediaClick) }
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier.size(30.dp).background(Color.White, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.PlayArrow,
+                contentDescription = "Play voice message",
+                tint = Skin.OnSignal,
+                modifier = Modifier.size(16.dp)
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Row(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            bars.forEach { barHeight ->
+                Box(
+                    modifier = Modifier
+                        .width(2.dp)
+                        .height(barHeight.dp)
+                        .clip(RoundedCornerShape(1.dp))
+                        .background(barColor.copy(alpha = 0.9f))
+                )
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = media?.duration?.let { formatDurationSeconds(it) } ?: "0:24",
+            style = SkinType.BubbleMetaOut,
+            color = metaColor
+        )
+    }
+}
+
+/** Image or video thumbnail; tapping opens the full-screen viewer. */
+@Composable
+private fun MediaBubble(
+    media: Media,
+    message: Message,
+    isOwn: Boolean,
+    onMediaClick: (Media) -> Unit
+) {
+    val shape = if (isOwn) Skin.BubbleOut else Skin.BubbleIn
+    Box(modifier = Modifier.widthIn(max = 260.dp).clip(shape).clickable { onMediaClick(media) }) {
+        AsyncImage(
+            model = media.secureUrl.ifBlank { media.thumbnailUrl },
+            contentDescription = media.originalFilename,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxWidth().height(180.dp)
+        )
+        if (message.type == MessageType.VIDEO) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(44.dp)
+                    .background(Color.Black.copy(alpha = 0.45f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = "Play video",
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(8.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.Black.copy(alpha = 0.45f))
+                .padding(horizontal = 6.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = message.createdAt.formatClockTime(),
+                style = SkinType.BubbleMetaIn,
+                color = Color.White
+            )
+        }
+    }
+}
+
+/** Tick / clock / error glyph in the bubble's meta row. */
+@Composable
+private fun StatusGlyph(status: MessageStatus, tint: Color, onRetry: () -> Unit) {
+    when (status) {
+        MessageStatus.PENDING, MessageStatus.SENDING -> Icon(
+            imageVector = Icons.Default.Schedule,
+            contentDescription = "Sending",
+            tint = tint,
+            modifier = Modifier.size(11.dp)
+        )
+
+        MessageStatus.SENT -> Icon(
+            imageVector = Icons.Default.Check,
+            contentDescription = "Sent",
+            tint = tint,
+            modifier = Modifier.size(11.dp)
+        )
+
+        MessageStatus.DELIVERED, MessageStatus.READ -> Icon(
+            imageVector = Icons.Default.DoneAll,
+            contentDescription = if (status == MessageStatus.READ) "Read" else "Delivered",
+            tint = tint,
+            modifier = Modifier.size(12.dp)
+        )
+
+        MessageStatus.FAILED -> Box(
+            modifier = Modifier.size(14.dp).clickable { onRetry() },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Refresh,
+                contentDescription = "Retry sending",
+                tint = Skin.OnSignal,
+                modifier = Modifier.size(12.dp)
+            )
+        }
+    }
+}
+
+/** Upload progress for the attachment in flight, with cancel and retry. */
+@Composable
+private fun AttachmentBanner(
+    fileName: String,
+    progress: Int,
+    failed: Boolean,
+    error: String?,
+    onCancel: () -> Unit,
+    onRetry: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Skin.SurfaceCard)
+            .padding(10.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.InsertDriveFile,
+                contentDescription = null,
+                tint = if (failed) Skin.Error else Skin.Signal,
+                modifier = Modifier.size(14.dp)
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = fileName,
+                style = SkinType.FileMeta,
+                color = Skin.Ink,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            if (failed) {
+                Box(
+                    modifier = Modifier.size(24.dp).clickable { onRetry() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Retry upload",
+                        tint = Skin.Signal,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
+            Box(
+                modifier = Modifier.size(24.dp).clickable { onCancel() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Dismiss upload",
+                    tint = Skin.InkDim,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+        }
+        if (failed) {
+            Text(text = error ?: "Upload failed", style = SkinType.FileMeta, color = Skin.Error)
+        } else {
+            Spacer(Modifier.height(6.dp))
+            LinearProgressIndicator(
+                progress = { progress / 100f },
+                color = Skin.Signal,
+                trackColor = Skin.Line,
+                modifier = Modifier.fillMaxWidth().height(3.dp)
+            )
+        }
+    }
+}
+
+/**
+ * Composer: rounded field with attach, input and mic, plus the lime send button.
+ * The plus opens the photo/document chooser.
+ */
+@Composable
+private fun Composer(
     text: String,
+    placeholder: String,
     onTextChange: (String) -> Unit,
     onSend: (String) -> Unit,
     onAttachPhoto: () -> Unit,
     onAttachDocument: () -> Unit
 ) {
-    // The paperclip opens a chooser rather than a single picker: a photo goes
-    // through the Photo Picker, a file through SAF, and they are different
-    // contracts with different results.
     var showAttachMenu by remember { mutableStateOf(false) }
 
-    Box(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(16.dp)
-            .background(androidx.compose.material3.MaterialTheme.colorScheme.surface)
+            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
+        verticalAlignment = Alignment.Bottom
     ) {
         Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 8.dp),
+                .weight(1f)
+                .heightIn(min = 46.dp)
+                .clip(RoundedCornerShape(15.dp))
+                .background(Skin.Field)
+                .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box {
-                IconButton(onClick = { showAttachMenu = true }) {
+                Box(
+                    modifier = Modifier.size(28.dp).clickable { showAttachMenu = true },
+                    contentAlignment = Alignment.Center
+                ) {
                     Icon(
                         imageVector = Icons.Default.Add,
-                        contentDescription = "Attach"
+                        contentDescription = "Attach",
+                        tint = Skin.InkDim,
+                        modifier = Modifier.size(18.dp)
                     )
                 }
-                DropdownMenu(
-                    expanded = showAttachMenu,
-                    onDismissRequest = { showAttachMenu = false }
-                ) {
+                DropdownMenu(expanded = showAttachMenu, onDismissRequest = { showAttachMenu = false }) {
                     DropdownMenuItem(
                         text = { Text("Photo or video") },
-                        leadingIcon = { Icon(Icons.Default.Image, contentDescription = null) },
                         onClick = {
                             showAttachMenu = false
                             onAttachPhoto()
@@ -605,7 +807,6 @@ fun MessageInput(
                     )
                     DropdownMenuItem(
                         text = { Text("Document") },
-                        leadingIcon = { Icon(Icons.Default.InsertDriveFile, contentDescription = null) },
                         onClick = {
                             showAttachMenu = false
                             onAttachDocument()
@@ -613,128 +814,115 @@ fun MessageInput(
                     )
                 }
             }
-            
-            TextField(
-                value = text,
-                onValueChange = onTextChange,
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = 8.dp),
-                placeholder = { Text("Message") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(
-                    onSend = { if (text.isNotBlank()) onSend(text) }
-                )
-            )
-            
-            if (text.isNotBlank()) {
-                IconButton(onClick = { onSend(text) }) {
-                    Icon(
-                        imageVector = Icons.Default.Send,
-                        contentDescription = "Send",
-                        tint = androidx.compose.material3.MaterialTheme.colorScheme.primary
+
+            Box(
+                modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                if (text.isEmpty()) {
+                    Text(
+                        text = placeholder,
+                        style = SkinType.ComposePlaceholder,
+                        color = Skin.InkGhost,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
+                BasicTextField(
+                    value = text,
+                    onValueChange = onTextChange,
+                    textStyle = SkinType.Body.copy(color = Skin.Ink),
+                    cursorBrush = SolidColor(Skin.Signal),
+                    maxLines = 4,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(
+                        onSend = { if (text.isNotBlank()) onSend(text) }
+                    ),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 13.dp)
+                )
             }
-        }
-    }
-}
 
-/**
- * A stable colour per sender id, so each member of a group is visually distinct
- * the way WhatsApp attributes messages. The palette is fixed rather than derived
- * from the theme so a given member keeps their colour across sessions.
- */
-private fun senderNameColor(senderId: Long): androidx.compose.ui.graphics.Color {
-    val palette = arrayOf(
-        0xFF0B8043, // green
-        0xFF1A73E8, // blue
-        0xFF8E24AA, // purple
-        0xFFD93025, // red
-        0xFFE8710A, // orange
-        0xFF007B83, // teal
-        0xFFC2185B, // pink
-        0xFF795548  // brown
-    )
-    // Spread the index: consecutive ids then map to adjacent, contrasting hues
-    // rather than all landing on the first entry.
-    return androidx.compose.ui.graphics.Color(palette[(senderId * 31 and 0x7FFFFFFF).toInt() % palette.size])
-}
-
-/**
- * Shows the attachment being sent: progress while it uploads, or the failure with
- * retry and dismiss once it has stopped.
- */
-@Composable
-private fun AttachmentSendBanner(
-    state: AttachmentSendState,
-    onCancel: () -> Unit,
-    onRetry: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 4.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
-                imageVector = Icons.Default.InsertDriveFile,
-                contentDescription = null,
+                imageVector = Icons.Default.Mic,
+                contentDescription = "Record voice message",
+                tint = Skin.InkFaint,
                 modifier = Modifier.size(16.dp)
             )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = state.fileName,
-                fontSize = 12.sp,
-                maxLines = 1,
-                modifier = Modifier.weight(1f)
-            )
-
-            if (state.failed) {
-                IconButton(onClick = onRetry) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Retry upload",
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-            IconButton(onClick = onCancel) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = if (state.failed) "Dismiss" else "Cancel upload",
-                    modifier = Modifier.size(18.dp)
-                )
-            }
         }
 
-        if (state.failed) {
-            Text(
-                text = state.error ?: "Upload failed",
-                color = androidx.compose.material3.MaterialTheme.colorScheme.error,
-                fontSize = 11.sp
-            )
-        } else {
-            LinearProgressIndicator(
-                progress = { state.progress / 100f },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(4.dp)
-            )
+        Spacer(Modifier.width(8.dp))
+
+        SignalIconButton(
+            icon = Icons.AutoMirrored.Filled.Send,
+            contentDescription = "Send",
+            size = 40,
+            onClick = { if (text.isNotBlank()) onSend(text) }
+        )
+    }
+}
+
+@Composable
+private fun GroupMenu(
+    onDismiss: () -> Unit,
+    onAddMembers: () -> Unit,
+    onRename: () -> Unit,
+    onLeave: () -> Unit
+) {
+    Box {
+        DropdownMenu(expanded = true, onDismissRequest = onDismiss) {
+            DropdownMenuItem(text = { Text("Add members") }, onClick = onAddMembers)
+            DropdownMenuItem(text = { Text("Rename group") }, onClick = onRename)
+            DropdownMenuItem(text = { Text("Leave group") }, onClick = onLeave)
         }
     }
 }
 
+@Composable
+private fun RenameDialog(
+    currentName: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var value by remember { mutableStateOf(currentName) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Skin.SurfaceCard,
+        titleContentColor = Skin.Ink,
+        title = { Text("Rename group", style = SkinType.Title) },
+        text = {
+            BasicTextField(
+                value = value,
+                onValueChange = { value = it },
+                singleLine = true,
+                textStyle = SkinType.Body.copy(color = Skin.Ink),
+                cursorBrush = SolidColor(Skin.Signal),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Skin.Field)
+                    .padding(12.dp)
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { if (value.isNotBlank()) onConfirm(value.trim()) }) {
+                Text("Rename", color = Skin.Signal)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel", color = Skin.InkDim) }
+        }
+    )
+}
+
+private fun formatDurationSeconds(seconds: Double): String {
+    val total = seconds.toInt()
+    return "%d:%02d".format(total / 60, total % 60)
+}
+
 /**
- * Copies a picked `content://` Uri into app cache and starts the send.
- *
- * The transfer streams from a file path — OkHttp needs a known length and a
- * seekable source — and the picker's read grant is temporary, so the bytes are
- * staged first. Runs on IO: `contentResolver` and the copy both block, and the
- * caller launches this from the composition's scope, which is main-threaded.
- *
- * @return an error message to display, or null when the send was started.
+ * Copies a picked `content://` Uri into app cache and starts the send. The upload
+ * streams from a file path and the picker grant is temporary, so bytes are staged.
  */
 private suspend fun stageAttachment(
     context: Context,
@@ -744,8 +932,7 @@ private suspend fun stageAttachment(
     try {
         val resolver = context.contentResolver
         val mimeType = resolver.getType(uri) ?: "application/octet-stream"
-        val displayName = queryDisplayName(context, uri)
-            ?: "attachment_${System.currentTimeMillis()}"
+        val displayName = queryDisplayName(context, uri) ?: "attachment_${System.currentTimeMillis()}"
 
         val directory = File(context.cacheDir, "outgoing").apply { mkdirs() }
         val target = File(directory, sanitizeFileName(displayName))
@@ -771,18 +958,11 @@ private suspend fun stageAttachment(
     }
 }
 
-/** The picker's user-facing filename, which is not derivable from the Uri. */
 private fun queryDisplayName(context: Context, uri: Uri): String? =
     context.contentResolver
         .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
         ?.use { cursor -> if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getString(0) else null }
 
-/**
- * Strips path separators and anything else that could escape the cache directory
- * — a display name is attacker-controlled content, not a safe filename.
- */
+/** A display name is remote content, not a safe filename. */
 private fun sanitizeFileName(name: String): String =
-    name.replace(Regex("[^A-Za-z0-9._-]"), "_")
-        .trim('.', '_')
-        .takeIf { it.isNotBlank() }
-        ?: "attachment"
+    name.replace(Regex("[^A-Za-z0-9._-]"), "_").trim('.', '_').takeIf { it.isNotBlank() } ?: "attachment"
