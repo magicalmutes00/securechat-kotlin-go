@@ -110,7 +110,10 @@ type DeviceResponse struct {
 }
 
 func (h *Handler) GetDevices(c *fiber.Ctx) error {
-	userID := c.Locals("user_id").(int64)
+	userID, ok := middleware.UserID(c)
+	if !ok {
+		return c.Status(401).JSON(apperrors.NewErrorResponse(apperrors.ErrUnauthorized))
+	}
 
 	devices, err := h.service.GetDevices(c.Context(), userID)
 	if err != nil {
@@ -142,7 +145,10 @@ func (h *Handler) GetDevices(c *fiber.Ctx) error {
 }
 
 func (h *Handler) DeleteDevice(c *fiber.Ctx) error {
-	userID := c.Locals("user_id").(int64)
+	userID, ok := middleware.UserID(c)
+	if !ok {
+		return c.Status(401).JSON(apperrors.NewErrorResponse(apperrors.ErrUnauthorized))
+	}
 	deviceID, err := c.ParamsInt("id")
 	if err != nil {
 		return c.Status(400).JSON(apperrors.NewErrorResponse(apperrors.ErrInvalidRequest))

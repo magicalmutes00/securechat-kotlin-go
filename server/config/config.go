@@ -119,6 +119,11 @@ func Load() (*Config, error) {
 	viper.SetDefault("securechat_jwt_refresh_ttl", 2592000)
 	viper.SetDefault("securechat_jwt_issuer", "securechat")
 	viper.SetDefault("securechat_jwt_audience", "securechat-android")
+	// Default to the development mock provider so a bare `go run` works, but
+	// validate() rejects everything except "twilio" when Env == "production".
+	// Without this default an unset variable became "" and silently selected
+	// the mock provider (which logs OTPs) even in production.
+	viper.SetDefault("securechat_otp_provider", "mock")
 	viper.SetDefault("securechat_otp_length", 6)
 	viper.SetDefault("securechat_otp_ttl", 300)
 	viper.SetDefault("securechat_otp_max_attempts", 5)
@@ -222,6 +227,14 @@ func Load() (*Config, error) {
 // validate fails fast on configurations that would silently misbehave in
 // production (ephemeral JWT keys, missing DB password, mock OTP).
 func (c *Config) validate() error {
+	// Reject unknown providers up front. A typo previously fell through to the
+	// mock provider in main.go instead of failing loudly.
+	switch c.OTP.Provider {
+	case "twilio", "mock":
+	default:
+		return fmt.Errorf("SECURECHAT_OTP_PROVIDER must be \"twilio\" or \"mock\" (got %q)", c.OTP.Provider)
+	}
+
 	if c.Server.Env == "production" {
 		if c.JWT.AccessSecret == "" {
 			return fmt.Errorf("SECURECHAT_JWT_ACCESS_SECRET is required in production")
@@ -232,8 +245,20 @@ func (c *Config) validate() error {
 		if c.Database.URL == "" && c.Database.Password == "" {
 			return fmt.Errorf("SECURECHAT_DATABASE_URL is required in production")
 		}
-		if c.OTP.Provider == "mock" {
-			return fmt.Errorf("SECURECHAT_OTP_PROVIDER=mock is not allowed in production")
+		// Anything other than "twilio" in production would log OTP codes to
+		// stdout and never deliver them, so require it plus its credentials.
+		if c.OTP.Provider != "twilio" {
+			return fmt.Errorf("SECURECHAT_OTP_PROVIDER must be \"twilio\" in production (got %q)", c.OTP.Provider)
+		}
+		if c.OTP.TwilioAccountSID == "" || c.OTP.TwilioAuthToken == "" || c.OTP.TwilioFromNumber == "" {
+			return fmt.Errorf("SECURECHAT_OTP_TWILIO_ACCOUNT_SID, SECURECHAT_OTP_TWILIO_AUTH_TOKEN and SECURECHAT_OTP_TWILIO_FROM_NUMBER are required when SECURECHAT_OTP_PROVIDER=twilio")
+		}
+		if c.Cloudinary.CloudName == "" || c.Cloudinary.APIKey == "" || c.Cloudinary.APISecret == "" {
+			return fmt.Errorf("SECURECHAT_CLOUDINARY_CLOUD_NAME, SECURECHAT_CLOUDINARY_API_KEY and SECURECHAT_CLOUDINARY_API_SECRET are required in production")
+		}
+		// A 6-digit OTP is only defensible with a real attempt cap.
+		if c.OTP.MaxAttempts <= 0 {
+			return fmt.Errorf("SECURECHAT_OTP_MAX_ATTEMPTS must be greater than zero")
 		}
 	}
 	return nil

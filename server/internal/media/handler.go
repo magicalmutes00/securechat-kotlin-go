@@ -58,7 +58,10 @@ type MediaResponse struct {
 }
 
 func (h *Handler) SignUpload(c *fiber.Ctx) error {
-	userID := c.Locals("user_id").(int64)
+	userID, ok := middleware.UserID(c)
+	if !ok {
+		return c.Status(401).JSON(apperrors.NewErrorResponse(apperrors.ErrUnauthorized))
+	}
 
 	var req SignUploadRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -82,7 +85,10 @@ func (h *Handler) SignUpload(c *fiber.Ctx) error {
 }
 
 func (h *Handler) CompleteUpload(c *fiber.Ctx) error {
-	userID := c.Locals("user_id").(int64)
+	userID, ok := middleware.UserID(c)
+	if !ok {
+		return c.Status(401).JSON(apperrors.NewErrorResponse(apperrors.ErrUnauthorized))
+	}
 
 	var req CompleteUploadRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -121,7 +127,10 @@ func (h *Handler) CompleteUpload(c *fiber.Ctx) error {
 }
 
 func (h *Handler) GetMedia(c *fiber.Ctx) error {
-	userID := c.Locals("user_id").(int64)
+	userID, ok := middleware.UserID(c)
+	if !ok {
+		return c.Status(401).JSON(apperrors.NewErrorResponse(apperrors.ErrUnauthorized))
+	}
 	id, err := c.ParamsInt("id")
 	if err != nil {
 		return c.Status(400).JSON(apperrors.NewErrorResponse(apperrors.ErrInvalidRequest))
@@ -149,7 +158,10 @@ func (h *Handler) GetMedia(c *fiber.Ctx) error {
 }
 
 func (h *Handler) DeleteMedia(c *fiber.Ctx) error {
-	userID := c.Locals("user_id").(int64)
+	userID, ok := middleware.UserID(c)
+	if !ok {
+		return c.Status(401).JSON(apperrors.NewErrorResponse(apperrors.ErrUnauthorized))
+	}
 	id, err := c.ParamsInt("id")
 	if err != nil {
 		return c.Status(400).JSON(apperrors.NewErrorResponse(apperrors.ErrInvalidRequest))

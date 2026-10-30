@@ -196,5 +196,19 @@ func (v *FirebaseTokenVerifier) Verify(ctx context.Context, idToken string) (*Fi
 		return nil, fmt.Errorf("firebase token has no phone_number claim")
 	}
 
+	// A phone_number claim alone is not proof of a phone sign-in: Firebase also
+	// includes it on tokens from other providers once a phone number is linked
+	// to the account (sign_in_provider would be "google.com", "password", ...).
+	// Without this check a linked Google/password account could authenticate as
+	// whatever phone number it had attached.
+	firebaseClaim, ok := claims["firebase"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("firebase token missing firebase claim")
+	}
+	signInProvider, _ := firebaseClaim["sign_in_provider"].(string)
+	if signInProvider != "phone" {
+		return nil, fmt.Errorf("firebase token was not issued by the phone provider (sign_in_provider=%q)", signInProvider)
+	}
+
 	return &FirebaseUserInfo{UID: uid, PhoneNumber: phone}, nil
 }

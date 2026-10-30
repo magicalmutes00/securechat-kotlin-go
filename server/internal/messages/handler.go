@@ -3,7 +3,6 @@ package messages
 import (
 	"database/sql"
 	"errors"
-	"fmt"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/securechat/server/internal/auth"
@@ -32,41 +31,48 @@ func RegisterRoutes(api fiber.Router, db *sql.DB, tokenManager *auth.TokenManage
 }
 
 type MessageResponse struct {
-	ID          int64   `json:"id"`
-	ConversationID int64 `json:"conversation_id"`
-	SenderID    int64   `json:"sender_id"`
-	Type        string  `json:"type"`
-	Text        *string `json:"text,omitempty"`
-	MediaID     *int64  `json:"media_id,omitempty"`
-	ReplyToID   *int64  `json:"reply_to_id,omitempty"`
-	Status      string  `json:"status"`
-	CreatedAt   int64   `json:"created_at"`
-	UpdatedAt   int64   `json:"updated_at"`
-	DeliveredAt *int64  `json:"delivered_at,omitempty"`
-	ReadAt      *int64  `json:"read_at,omitempty"`
+	ID             int64   `json:"id"`
+	ConversationID int64   `json:"conversation_id"`
+	SenderID       int64   `json:"sender_id"`
+	SenderName     *string `json:"sender_name,omitempty"`
+	Type           string  `json:"type"`
+	Text           *string `json:"text,omitempty"`
+	MediaID        *int64  `json:"media_id,omitempty"`
+	// Media is the attachment itself, not just its id. Clients render a bubble
+	// from this payload alone; they cannot fetch someone else's media row.
+	Media          *MediaAttachment `json:"media,omitempty"`
+	ReplyToID      *int64           `json:"reply_to_id,omitempty"`
+	Status         string           `json:"status"`
+	CreatedAt      int64            `json:"created_at"`
+	UpdatedAt      int64            `json:"updated_at"`
+	DeliveredAt    *int64           `json:"delivered_at,omitempty"`
+	ReadAt         *int64           `json:"read_at,omitempty"`
 }
 
 type MessagePageResponse struct {
 	Messages   []MessageResponse `json:"messages"`
-	NextCursor *int64            `json:"next_cursor,omitempty"`
+	NextCursor *string           `json:"next_cursor,omitempty"`
 	HasMore    bool              `json:"has_more"`
 }
 
 func (h *Handler) GetMessages(c *fiber.Ctx) error {
-	userID := c.Locals("user_id").(int64)
+	userID, ok := c.Locals("user_id").(int64)
+	if !ok {
+		return c.Status(401).JSON(apperrors.NewErrorResponse(apperrors.ErrUnauthorized))
+	}
 	conversationID, err := c.ParamsInt("conversation_id")
 	if err != nil {
 		return c.Status(400).JSON(apperrors.NewErrorResponse(apperrors.ErrInvalidRequest))
 	}
 
 	limit := c.QueryInt("limit", 30)
-	cursorStr := c.Query("cursor")
-	var cursor *int64
-	if cursorStr != "" {
-		var ts int64
-		if _, err := fmt.Sscanf(cursorStr, "%d", &ts); err == nil {
-			cursor = &ts
-		}
+
+	// The cursor is opaque to clients: they echo back whatever next_cursor they
+	// received. ParseCursor validates its shape so a malformed value is a 400
+	// rather than a confusing empty page.
+	cursor, err := ParseCursor(c.Query("cursor"))
+	if err != nil {
+		return c.Status(400).JSON(apperrors.NewErrorResponse(apperrors.ErrInvalidRequest))
 	}
 
 	page, err := h.service.GetMessages(c.Context(), int64(conversationID), userID, limit, cursor)
@@ -84,18 +90,27 @@ func (h *Handler) GetMessages(c *fiber.Ctx) error {
 		response[i] = toMessageResponse(msg)
 	}
 
+	var nextCursor *string
+	if page.NextCursor != nil {
+		encoded := page.NextCursor.String()
+		nextCursor = &encoded
+	}
+
 	return c.JSON(fiber.Map{
 		"success": true,
 		"data": MessagePageResponse{
 			Messages:   response,
-			NextCursor: page.NextCursor,
+			NextCursor: nextCursor,
 			HasMore:    page.HasMore,
 		},
 	})
 }
 
 func (h *Handler) DeleteMessage(c *fiber.Ctx) error {
-	userID := c.Locals("user_id").(int64)
+	userID, ok := c.Locals("user_id").(int64)
+	if !ok {
+		return c.Status(401).JSON(apperrors.NewErrorResponse(apperrors.ErrUnauthorized))
+	}
 	messageID, err := c.ParamsInt("id")
 	if err != nil {
 		return c.Status(400).JSON(apperrors.NewErrorResponse(apperrors.ErrInvalidRequest))
@@ -149,9 +164,11 @@ func toMessageResponse(msg *Message) MessageResponse {
 		ID:            msg.ID,
 		ConversationID: msg.ConversationID,
 		SenderID:      msg.SenderID,
+		SenderName:    nullStringPtr(msg.SenderName),
 		Type:          msg.Type,
 		Text:          text,
 		MediaID:       mediaID,
+		Media:         msg.Media,
 		ReplyToID:     replyToID,
 		Status:        msg.Status,
 		CreatedAt:     msg.CreatedAt.UnixMilli(),
@@ -159,4 +176,14 @@ func toMessageResponse(msg *Message) MessageResponse {
 		DeliveredAt:   deliveredAt,
 		ReadAt:        readAt,
 	}
+}
+
+// nullStringPtr converts a nullable column into the JSON shape: a NULL becomes a
+// missing field rather than an empty string, which the client treats as "unknown
+// author" instead of "author with an empty name".
+func nullStringPtr(ns sql.NullString) *string {
+	if ns.Valid {
+		return &ns.String
+	}
+	return nil
 }

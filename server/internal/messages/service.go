@@ -15,7 +15,7 @@ func NewService(repo *Repository) *Service {
 	return &Service{repo: repo}
 }
 
-func (s *Service) GetMessages(ctx context.Context, conversationID, userID int64, limit int, cursor *int64) (*MessagePage, error) {
+func (s *Service) GetMessages(ctx context.Context, conversationID, userID int64, limit int, cursor *Cursor) (*MessagePage, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 30
 	}

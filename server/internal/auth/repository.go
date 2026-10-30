@@ -50,6 +50,9 @@ type Session struct {
 	ExpiresAt        time.Time
 	RevokedAt        sql.NullTime
 	CreatedAt        time.Time
+	// RefreshRotatedAt is NULL until the refresh token is first rotated. It
+	// bounds the retry grace window in Service.RefreshToken.
+	RefreshRotatedAt sql.NullTime
 }
 
 func (r *Repository) FindUserByPhone(ctx context.Context, phoneNumber string) (*User, error) {
@@ -208,11 +211,11 @@ func (r *Repository) CreateSession(ctx context.Context, userID, deviceID int64, 
 func (r *Repository) FindSessionByID(ctx context.Context, id int64) (*Session, error) {
 	var session Session
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, user_id, device_id, refresh_token_hash, expires_at, revoked_at, created_at
+		SELECT id, user_id, device_id, refresh_token_hash, expires_at, revoked_at, created_at, refresh_rotated_at
 		FROM sessions WHERE id = $1
 	`, id).Scan(
 		&session.ID, &session.UserID, &session.DeviceID, &session.RefreshTokenHash,
-		&session.ExpiresAt, &session.RevokedAt, &session.CreatedAt,
+		&session.ExpiresAt, &session.RevokedAt, &session.CreatedAt, &session.RefreshRotatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -220,19 +223,53 @@ func (r *Repository) FindSessionByID(ctx context.Context, id int64) (*Session, e
 	return &session, nil
 }
 
-// UpdateSessionRefreshHash rotates a session's refresh token hash in place.
-// The session row (and therefore the session_id claim inside the JWTs) stays
-// stable across rotations, so access tokens remain bound to the same session.
-func (r *Repository) UpdateSessionRefreshHash(ctx context.Context, sessionID int64, refreshToken string, expiresAt time.Time) error {
-	refreshTokenHash := crypto.HashToken(refreshToken)
-
+// SetSessionRefreshHash writes the first real refresh token hash for a session
+// created moments earlier with a placeholder value. There is no previous hash
+// to compare against (nothing has been handed to a client yet), so this is a
+// plain write; refresh_rotated_at stays NULL so the first legitimate refresh is
+// never mistaken for a retry of a rotation.
+func (r *Repository) SetSessionRefreshHash(ctx context.Context, sessionID int64, refreshToken string, expiresAt time.Time) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE sessions SET refresh_token_hash = $1, expires_at = $2 WHERE id = $3
-	`, refreshTokenHash, expiresAt, sessionID)
+	`, crypto.HashToken(refreshToken), expiresAt, sessionID)
 	if err != nil {
-		return fmt.Errorf("failed to update session refresh hash: %w", err)
+		return fmt.Errorf("failed to store session refresh hash: %w", err)
 	}
 	return nil
+}
+
+// RotateSessionRefreshHash rotates a session's refresh token hash in place.
+// The session row (and therefore the session_id claim inside the JWTs) stays
+// stable across rotations, so access tokens remain bound to the same session.
+//
+// The update is a compare-and-swap on the *expected* current hash: it reports
+// false when another concurrent request already rotated the session. Without
+// that guard two parallel refreshes both "succeeded", the loser's token was
+// never stored, and its next use looked exactly like token theft — revoking
+// every session the user had.
+func (r *Repository) RotateSessionRefreshHash(
+	ctx context.Context,
+	sessionID int64,
+	oldRefreshToken, newRefreshToken string,
+	expiresAt time.Time,
+) (bool, error) {
+	oldHash := crypto.HashToken(oldRefreshToken)
+	newHash := crypto.HashToken(newRefreshToken)
+
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE sessions
+		SET refresh_token_hash = $1, expires_at = $2, refresh_rotated_at = NOW()
+		WHERE id = $3 AND refresh_token_hash = $4 AND revoked_at IS NULL
+	`, newHash, expiresAt, sessionID, oldHash)
+	if err != nil {
+		return false, fmt.Errorf("failed to rotate session refresh hash: %w", err)
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to confirm session rotation: %w", err)
+	}
+	return affected == 1, nil
 }
 
 // IsSessionActive reports whether a session exists, belongs to the user, and
@@ -298,12 +335,12 @@ func (r *Repository) GetUserDevices(ctx context.Context, userID int64) ([]*Devic
 func (r *Repository) FindSessionByRefreshToken(ctx context.Context, sessionID int64) (*Session, error) {
 	var session Session
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, user_id, device_id, refresh_token_hash, expires_at, revoked_at, created_at
+		SELECT id, user_id, device_id, refresh_token_hash, expires_at, revoked_at, created_at, refresh_rotated_at
 		FROM sessions
 		WHERE id = $1
 	`, sessionID).Scan(
 		&session.ID, &session.UserID, &session.DeviceID, &session.RefreshTokenHash,
-		&session.ExpiresAt, &session.RevokedAt, &session.CreatedAt,
+		&session.ExpiresAt, &session.RevokedAt, &session.CreatedAt, &session.RefreshRotatedAt,
 	)
 	if err != nil {
 		return nil, err

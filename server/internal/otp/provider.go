@@ -6,6 +6,10 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/securechat/server/pkg/crypto"
+	"github.com/securechat/server/pkg/logger"
+	"go.uber.org/zap"
 )
 
 // Provider defines the interface for OTP delivery providers (SMS, email, etc.)
@@ -16,13 +20,22 @@ type Provider interface {
 	Name() string
 }
 
-// MockProvider is a development provider that logs OTPs instead of sending them
+// MockProvider is a development provider that logs OTPs instead of sending them.
+//
+// It is unreachable in production: config.validate() requires
+// SECURECHAT_OTP_PROVIDER=twilio whenever SECURECHAT_ENVIRONMENT=production.
 type MockProvider struct{}
 
 func (m *MockProvider) Send(ctx context.Context, phoneNumber, otp string) error {
-	// In development, just log the OTP (in production, NEVER log OTPs)
-	// Using a structured logger would be better
-	println("[DEV MOCK OTP] To:", phoneNumber, "Code:", otp)
+	// Previously this was a bare println that emitted the raw phone number and
+	// the code. It now goes through the structured logger at Warn, with the
+	// phone number masked, so a misconfigured non-production environment is
+	// loud in logs without leaking a full number.
+	logger.Log.Warn("[DEV] Mock OTP provider: no SMS sent",
+		zap.String("phone", crypto.MaskPhoneNumber(phoneNumber)),
+		zap.String("otp", otp),
+		zap.String("hint", "set SECURECHAT_OTP_PROVIDER=twilio to deliver real SMS"),
+	)
 	return nil
 }
 

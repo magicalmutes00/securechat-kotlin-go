@@ -20,6 +20,7 @@ import (
 	"github.com/securechat/server/internal/conversations"
 	"github.com/securechat/server/internal/database"
 	"github.com/securechat/server/internal/devices"
+	"github.com/securechat/server/internal/keys"
 	"github.com/securechat/server/internal/media"
 	"github.com/securechat/server/internal/messages"
 	"github.com/securechat/server/internal/middleware"
@@ -76,8 +77,13 @@ func main() {
 	switch cfg.OTP.Provider {
 	case "twilio":
 		otpProvider = otp.NewTwilioProvider(cfg.OTP.TwilioAccountSID, cfg.OTP.TwilioAuthToken, cfg.OTP.TwilioFromNumber)
-	default:
+	case "mock":
 		otpProvider = &otp.MockProvider{}
+	default:
+		// config.validate() already rejects unknown values; this default keeps
+		// the switch exhaustive so a future provider can never silently fall
+		// back to the mock provider that logs OTPs.
+		log.Fatal("Unsupported OTP provider", zap.String("provider", cfg.OTP.Provider))
 	}
 	otpService := otp.NewService(db, otpProvider, cfg)
 
@@ -137,6 +143,23 @@ func main() {
 		},
 	}))
 
+	// Stricter, shared ceiling on the OTP endpoints. The global 300/min is far
+	// too loose for routes that spend SMS budget or verify a 6-digit code; the
+	// per-phone resend cooldown and the atomic attempt cap live in the OTP
+	// service, and this bounds the per-IP request rate on top of them.
+	otpLimiter := limiter.New(limiter.Config{
+		Max:        10,
+		Expiration: time.Minute,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return c.IP()
+		},
+		LimitReached: func(c *fiber.Ctx) error {
+			return c.Status(429).JSON(errorsPkg.NewErrorResponse(errorsPkg.ErrRateLimited))
+		},
+	})
+	app.Use("/api/v1/auth/send-otp", otpLimiter)
+	app.Use("/api/v1/auth/verify-otp", otpLimiter)
+
 	// Health check
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
@@ -167,6 +190,9 @@ func main() {
 
 	// Devices routes
 	devices.RegisterRoutes(api, db, tokenManager)
+
+	// E2EE prekey directory (public key material only; see docs/e2ee-design.md)
+	keys.RegisterRoutes(api, db, tokenManager)
 
 	// WebSocket
 	app.Get("/ws", fiberwebsocket.New(websocket.WebSocketHandler(db, tokenManager)))

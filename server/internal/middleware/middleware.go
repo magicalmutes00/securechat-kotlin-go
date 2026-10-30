@@ -18,6 +18,24 @@ type ClaimsValidator interface {
 	ValidateAccessClaims(tokenString string) (userID, deviceID, sessionID int64, err error)
 }
 
+// UserID returns the authenticated user id that JWTAuth stored on the request.
+//
+// It reports false when the local is missing or has the wrong type, so a route
+// accidentally mounted without JWTAuth answers 401 instead of panicking — which
+// is what an unguarded c.Locals("user_id").(int64) assertion does.
+func UserID(c *fiber.Ctx) (int64, bool) {
+	userID, ok := c.Locals("user_id").(int64)
+	return userID, ok
+}
+
+// DeviceID returns the device id that JWTAuth stored on the request, mirroring
+// [UserID]. E2EE key material is per-device, so the prekey endpoints key off
+// this rather than off a body field the client could spoof.
+func DeviceID(c *fiber.Ctx) (int64, bool) {
+	deviceID, ok := c.Locals("device_id").(int64)
+	return deviceID, ok
+}
+
 // SessionChecker reports whether a session is still active. A nil checker
 // skips the session lookup (JWT signature is still verified).
 type SessionChecker interface {

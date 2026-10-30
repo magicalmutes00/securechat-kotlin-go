@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"math/big"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -48,21 +49,25 @@ func CheckToken(storedHash, token string) bool {
 	return ConstantTimeCompare(storedHash, HashToken(token))
 }
 
-// GenerateOTP generates a cryptographically secure OTP
+// GenerateOTP generates a cryptographically secure, uniformly distributed OTP.
 func GenerateOTP(length int) (string, error) {
 	if length <= 0 {
 		length = OTPLength
 	}
 
-	bytes := make([]byte, length)
-	_, err := rand.Read(bytes)
-	if err != nil {
-		return "", err
-	}
-
+	charsetLen := big.NewInt(int64(len(OTPCharset)))
 	otp := make([]byte, length)
+
 	for i := 0; i < length; i++ {
-		otp[i] = OTPCharset[bytes[i]%byte(len(OTPCharset))]
+		// rand.Int rejection-samples, so every digit is equally likely. The
+		// previous `bytes[i] % len(charset)` mapped 256 byte values onto 10
+		// digits, which made 0-5 (26 values each) ~1.7% more likely than
+		// 6-9 (25 each).
+		n, err := rand.Int(rand.Reader, charsetLen)
+		if err != nil {
+			return "", err
+		}
+		otp[i] = OTPCharset[n.Int64()]
 	}
 
 	return string(otp), nil

@@ -53,6 +53,11 @@ var (
 	ErrTokenInvalid       = New("TOKEN_INVALID", "Token is invalid", http.StatusUnauthorized)
 	ErrTokenRevoked       = New("TOKEN_REVOKED", "Token has been revoked", http.StatusUnauthorized)
 	ErrRefreshFailed      = New("REFRESH_FAILED", "Failed to refresh token", http.StatusUnauthorized)
+	// ErrRefreshConflict signals a lost concurrent-rotation race rather than a
+	// bad token: two requests presented the same valid refresh token at once.
+	// The client should retry with the token it already holds; it must NOT be
+	// treated as reuse (which revokes every session for the user).
+	ErrRefreshConflict = New("REFRESH_CONFLICT", "A concurrent refresh already rotated this session; retry with the stored token", http.StatusConflict)
 
 	// User errors
 	ErrUserNotFound       = New("USER_NOT_FOUND", "User not found", http.StatusNotFound)
@@ -77,6 +82,18 @@ var (
 
 	// Device errors
 	ErrDeviceNotFound     = New("DEVICE_NOT_FOUND", "Device not found", http.StatusNotFound)
+
+	// E2EE key errors
+	// ErrIdentityKeyConflict means a device already published a *different*
+	// long-term identity key. Refusing the silent overwrite is deliberate:
+	// replacing an identity key invalidates every session built on it, and an
+	// accepted replacement is indistinguishable from a substituted key.
+	ErrIdentityKeyConflict = New("IDENTITY_KEY_CONFLICT", "A different identity key is already registered for this device", http.StatusConflict)
+	// ErrDeviceNotAuthorized guards POST /keys/claim: claiming prekeys is only
+	// permitted for devices whose user shares a conversation with the caller.
+	// Without this the endpoint would let anyone exhaust another user's
+	// one-time prekeys.
+	ErrDeviceNotAuthorized = New("DEVICE_NOT_AUTHORIZED", "Cannot claim prekeys for a device you do not share a conversation with", http.StatusForbidden)
 
 	// WebSocket errors
 	ErrWSAuthFailed       = New("WS_AUTH_FAILED", "WebSocket authentication failed", http.StatusUnauthorized)

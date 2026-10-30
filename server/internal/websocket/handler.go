@@ -26,6 +26,8 @@ const (
 	// Max inbound frame size: text messages can be long, but this still caps
 	// a single frame well below anything a chat message needs.
 	maxMessageSize = 64 * 1024
+	// dbTimeout bounds a single database call made on behalf of a socket.
+	dbTimeout = 5 * time.Second
 )
 
 type Hub struct {
@@ -38,18 +40,23 @@ type Hub struct {
 }
 
 type Client struct {
-	hub       *Hub
-	conn      *websocket.Conn
-	send      chan []byte
-	closeOnce sync.Once // closes send
-	connOnce  sync.Once // closes conn exactly once
-	doneOnce  sync.Once // closes done exactly once
-	done      chan struct{}
-	mu        sync.Mutex // guards conn writes (write pump is the only writer)
-	userID    int64
-	deviceID  int64
-	sessionID int64
-	authed    bool
+	hub        *Hub
+	conn       *websocket.Conn
+	send       chan []byte
+	sendMu     sync.RWMutex // guards sendClosed and every write to send
+	sendClosed bool
+	connOnce   sync.Once // closes conn exactly once
+	doneOnce   sync.Once // closes done + cancels ctx exactly once
+	done       chan struct{}
+	mu         sync.Mutex // guards conn writes (write pump is the only writer)
+	userID     int64
+	deviceID   int64
+	sessionID  int64
+	authed     bool
+	// ctx is cancelled on teardown so a database call started for this socket is
+	// abandoned rather than left running against a connection that is gone.
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 type WSMessage struct {
@@ -150,7 +157,10 @@ func (h *Hub) Run() {
 			_, stillOnline := h.clients[client.userID]
 			h.mu.RUnlock()
 			if !stillOnline && client.userID != 0 {
-				h.updateUserOnlineStatus(client.userID, false)
+				// Deliberately off the hub loop: this used to run a database
+				// write and a process-wide presence broadcast inline, stalling
+				// every other client's registration while it completed.
+				go h.updateUserOnlineStatus(client.userID, false)
 			}
 			logger.Log.Info("WebSocket client unregistered", zap.Int64("user_id", client.userID))
 		}
@@ -158,9 +168,13 @@ func (h *Hub) Run() {
 }
 
 func (c *Client) closeSend() {
-	c.closeOnce.Do(func() {
-		close(c.send)
-	})
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	if c.sendClosed {
+		return
+	}
+	c.sendClosed = true
+	close(c.send)
 }
 
 // closeConn closes the underlying socket exactly once. fasthttp/websocket
@@ -175,8 +189,25 @@ func (c *Client) closeConn() {
 // shutdown signals both pumps to stop and tears the socket down. It is safe to
 // call concurrently and repeatedly from any goroutine.
 func (c *Client) shutdown() {
-	c.doneOnce.Do(func() { close(c.done) })
+	c.doneOnce.Do(func() {
+		close(c.done)
+		if c.cancel != nil {
+			c.cancel()
+		}
+	})
 	c.closeConn()
+}
+
+// dbCtx returns a context bounded by both dbTimeout and this connection's
+// lifetime. Every database call in this file previously used
+// context.Background(), so a slow query pinned the read pump forever and kept
+// running long after the client disappeared.
+func (c *Client) dbCtx() (context.Context, context.CancelFunc) {
+	base := c.ctx
+	if base == nil {
+		base = context.Background()
+	}
+	return context.WithTimeout(base, dbTimeout)
 }
 
 func (c *Client) ReadPump() {
@@ -309,8 +340,11 @@ func (c *Client) handleAuthenticate(payload json.RawMessage) {
 	}
 
 	// Verify session is still active
+	ctx, cancel := c.dbCtx()
+	defer cancel()
+
 	var isActive bool
-	err = c.hub.db.QueryRowContext(context.Background(), `
+	err = c.hub.db.QueryRowContext(ctx, `
 		SELECT EXISTS(SELECT 1 FROM sessions WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL AND expires_at > NOW())
 	`, claims.SessionID, claims.UserID).Scan(&isActive)
 	if err != nil || !isActive {
@@ -329,8 +363,9 @@ func (c *Client) handleAuthenticate(payload json.RawMessage) {
 		// Register client
 		c.hub.register <- c
 
-		// Update user online status
-		c.hub.updateUserOnlineStatus(claims.UserID, true)
+		// Update user online status (off the critical path: this does a DB write
+		// plus a process-wide presence broadcast).
+		go c.hub.updateUserOnlineStatus(claims.UserID, true)
 	}
 
 	// Send auth ack
@@ -351,9 +386,14 @@ func (c *Client) handleMessageSend(tempID string, payload json.RawMessage) {
 		return
 	}
 
+	// Bounded to dbTimeout and to this connection's lifetime, so a slow query
+	// cannot pin the read pump and is abandoned when the socket dies.
+	ctx, cancel := c.dbCtx()
+	defer cancel()
+
 	// Verify user is participant in conversation
 	var isParticipant bool
-	err := c.hub.db.QueryRowContext(context.Background(), `
+	err := c.hub.db.QueryRowContext(ctx, `
 		SELECT EXISTS(SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NULL)
 	`, msgSend.ConversationID, c.userID).Scan(&isParticipant)
 	if err != nil || !isParticipant {
@@ -373,7 +413,7 @@ func (c *Client) handleMessageSend(tempID string, payload json.RawMessage) {
 		Status:         "sent",
 	}
 
-	createdMsg, err := msgRepo.Create(context.Background(), msg)
+	createdMsg, err := msgRepo.Create(ctx, msg)
 	if err != nil {
 		logger.Log.Error("Failed to create message", zap.Error(err))
 		c.sendError("MESSAGE_FAILED", "Failed to send message")
@@ -384,11 +424,17 @@ func (c *Client) handleMessageSend(tempID string, payload json.RawMessage) {
 	// from the message (media is uploaded before sending).
 	if msgSend.MediaID != nil {
 		mediaRepo := media.NewRepository(c.hub.db)
-		if err := mediaRepo.LinkToMessage(context.Background(), *msgSend.MediaID, createdMsg.ID, c.userID); err != nil {
+		if err := mediaRepo.LinkToMessage(ctx, *msgSend.MediaID, createdMsg.ID, c.userID); err != nil {
 			logger.Log.Warn("Failed to link media to message",
 				zap.Int64("media_id", *msgSend.MediaID),
 				zap.Int64("message_id", createdMsg.ID),
 				zap.Error(err))
+		} else if refreshed, err := msgRepo.GetByID(ctx, createdMsg.ID); err == nil {
+			// Re-read after linking: the row created above has media_id set but
+			// no attached media, because media.message_id was still NULL when it
+			// was fetched. Broadcasting it unrefreshed sent MESSAGE_RECEIVED to
+			// every recipient without the attachment they were meant to draw.
+			createdMsg = refreshed
 		}
 	}
 
@@ -452,14 +498,17 @@ func (c *Client) handleMessageRead(payload json.RawMessage) {
 
 	// Verify the message actually belongs to the conversation before marking
 	// it read — otherwise any participant could toggle arbitrary messages.
+	ctx, cancel := c.dbCtx()
+	defer cancel()
+
 	msgRepo := messages.NewRepository(c.hub.db)
-	belongs, err := msgRepo.BelongsToConversation(context.Background(), read.MessageID, read.ConversationID)
+	belongs, err := msgRepo.BelongsToConversation(ctx, read.MessageID, read.ConversationID)
 	if err != nil || !belongs {
 		c.sendError("INVALID_MESSAGE", "Message does not belong to this conversation")
 		return
 	}
 
-	if err := msgRepo.UpdateReadStatus(context.Background(), read.MessageID); err != nil {
+	if err := msgRepo.UpdateReadStatus(ctx, read.MessageID); err != nil {
 		logger.Log.Error("Failed to update read status", zap.Error(err))
 	}
 
@@ -486,14 +535,17 @@ func (c *Client) handleMessageDelivered(payload json.RawMessage) {
 		return
 	}
 
+	ctx, cancel := c.dbCtx()
+	defer cancel()
+
 	msgRepo := messages.NewRepository(c.hub.db)
-	belongs, err := msgRepo.BelongsToConversation(context.Background(), delivered.MessageID, delivered.ConversationID)
+	belongs, err := msgRepo.BelongsToConversation(ctx, delivered.MessageID, delivered.ConversationID)
 	if err != nil || !belongs {
 		c.sendError("INVALID_MESSAGE", "Message does not belong to this conversation")
 		return
 	}
 
-	if err := msgRepo.UpdateStatus(context.Background(), delivered.MessageID, "delivered"); err != nil {
+	if err := msgRepo.UpdateStatus(ctx, delivered.MessageID, "delivered"); err != nil {
 		logger.Log.Error("Failed to update delivery status", zap.Error(err))
 	}
 
@@ -519,7 +571,10 @@ func (c *Client) handleMessageDelete(payload json.RawMessage) {
 
 	// Resolve the message's conversation first: the delete event must be
 	// scoped to that conversation only, never broadcast globally.
-	msg, err := msgRepo.GetByID(context.Background(), del.MessageID)
+	ctx, cancel := c.dbCtx()
+	defer cancel()
+
+	msg, err := msgRepo.GetByID(ctx, del.MessageID)
 	if err != nil {
 		c.sendError("MESSAGE_NOT_FOUND", "Message not found")
 		return
@@ -530,7 +585,7 @@ func (c *Client) handleMessageDelete(payload json.RawMessage) {
 		return
 	}
 
-	if err := msgRepo.SoftDelete(context.Background(), del.MessageID, c.userID); err != nil {
+	if err := msgRepo.SoftDelete(ctx, del.MessageID, c.userID); err != nil {
 		c.sendError("MESSAGE_DELETE_FAILED", "Failed to delete message")
 		return
 	}
@@ -548,8 +603,11 @@ func (c *Client) handleMessageDelete(payload json.RawMessage) {
 // isParticipant reports whether the client's user is an active participant of
 // the conversation.
 func (c *Client) isParticipant(conversationID int64) bool {
+	ctx, cancel := c.dbCtx()
+	defer cancel()
+
 	var isParticipant bool
-	err := c.hub.db.QueryRowContext(context.Background(), `
+	err := c.hub.db.QueryRowContext(ctx, `
 		SELECT EXISTS(SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NULL)
 	`, conversationID, c.userID).Scan(&isParticipant)
 	return err == nil && isParticipant
@@ -557,11 +615,33 @@ func (c *Client) isParticipant(conversationID int64) bool {
 
 func (c *Client) sendMessage(msg WSMessage) {
 	data, _ := json.Marshal(msg)
+	c.queue(data)
+}
+
+// queue hands data to the write pump without ever blocking and without ever
+// writing to a closed channel.
+//
+// Closing c.send is guarded by sendMu so it cannot interleave with an
+// in-flight send. Without that guard this was a live panic: a client whose
+// buffer filled was unregistered (which closes c.send) while its own read pump
+// was still handling inbound frames, and the next send wrote to the closed
+// channel.
+func (c *Client) queue(data []byte) {
+	c.sendMu.RLock()
+	defer c.sendMu.RUnlock()
+
+	if c.sendClosed {
+		return
+	}
+
 	select {
 	case c.send <- data:
 	default:
-		// Buffer full: drop the client rather than block the reader.
-		c.hub.unregister <- c
+		// Buffer full: the peer is not draining its socket. Tear the
+		// connection down instead of blocking the broadcaster. This must stay
+		// non-blocking and must not touch the hub: queue also runs on the
+		// broadcast path, which holds hub.mu.RLock.
+		go c.shutdown()
 	}
 }
 
@@ -581,7 +661,10 @@ func (c *Client) sendError(code, message string) {
 func (h *Hub) broadcastToConversation(conversationID int64, exclude *Client, msg WSMessage) {
 	data, _ := json.Marshal(msg)
 
-	rows, err := h.db.QueryContext(context.Background(), `
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	rows, err := h.db.QueryContext(ctx, `
 		SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND left_at IS NULL
 	`, conversationID)
 	if err != nil {
@@ -611,19 +694,23 @@ func (h *Hub) broadcastToConversation(conversationID int64, exclude *Client, msg
 			if client == exclude {
 				continue
 			}
-			select {
-			case client.send <- data:
-			default:
-				// Receiver too slow; skip rather than block everyone else.
-			}
+			// queue is non-blocking and closed-channel safe, so a slow or
+			// already-dropped peer cannot stall the broadcast.
+			client.queue(data)
 		}
 	}
 }
 
 func (h *Hub) updateUserOnlineStatus(userID int64, isOnline bool) {
-	h.db.ExecContext(context.Background(), `
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	if _, err := h.db.ExecContext(ctx, `
 		UPDATE users SET is_online = $1, last_seen = NOW() WHERE id = $2
-	`, isOnline, userID)
+	`, isOnline, userID); err != nil {
+		logger.Log.Error("Failed to update user online status",
+			zap.Int64("user_id", userID), zap.Bool("is_online", isOnline), zap.Error(err))
+	}
 
 	// Broadcast presence update
 	data, _ := json.Marshal(WSMessage{
@@ -639,10 +726,7 @@ func (h *Hub) updateUserOnlineStatus(userID int64, isOnline bool) {
 	defer h.mu.RUnlock()
 	for _, clients := range h.clients {
 		for client := range clients {
-			select {
-			case client.send <- data:
-			default:
-			}
+			client.queue(data)
 		}
 	}
 }
@@ -667,18 +751,36 @@ func toNullInt64(i *int64) sql.NullInt64 {
 }
 
 func toMessageResponse(msg *messages.Message) map[string]interface{} {
+	// sender_name is absent rather than empty when unknown, so the client can
+	// distinguish "no author recorded" from an author with a blank name.
+	var senderName interface{}
+	if msg.SenderName.Valid {
+		senderName = msg.SenderName.String
+	}
+
 	return map[string]interface{}{
 		"id":              msg.ID,
 		"conversation_id": msg.ConversationID,
 		"sender_id":       msg.SenderID,
+		"sender_name":     senderName,
 		"type":            msg.Type,
 		"text":            msg.Text.String,
 		"media_id":        nullIfZero(msg.MediaID.Int64, msg.MediaID.Valid),
+		"media":           mediaAttachment(msg.Media),
 		"reply_to_id":     nullIfZero(msg.ReplyToID.Int64, msg.ReplyToID.Valid),
 		"status":          msg.Status,
 		"created_at":      msg.CreatedAt.UnixMilli(),
 		"updated_at":      msg.UpdatedAt.UnixMilli(),
 	}
+}
+
+// mediaAttachment shapes an attachment for the socket frame, or nil when the
+// message has none (so the client sees an absent field, not an empty object).
+func mediaAttachment(m *messages.MediaAttachment) interface{} {
+	if m == nil {
+		return nil
+	}
+	return m
 }
 
 func nullIfZero(v int64, valid bool) interface{} {
@@ -693,11 +795,14 @@ func WebSocketHandler(db *sql.DB, tokenMgr *auth.TokenManager) func(*websocket.C
 	go hub.Run()
 
 	return func(c *websocket.Conn) {
+		ctx, cancel := context.WithCancel(context.Background())
 		client := &Client{
-			hub:  hub,
-			conn: c,
-			send: make(chan []byte, sendBufSize),
-			done: make(chan struct{}),
+			hub:    hub,
+			conn:   c,
+			send:   make(chan []byte, sendBufSize),
+			done:   make(chan struct{}),
+			ctx:    ctx,
+			cancel: cancel,
 		}
 
 		// WritePump owns all socket writes (messages + pings); ReadPump owns

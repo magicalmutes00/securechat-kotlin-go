@@ -136,12 +136,14 @@ func (s *Service) completeAuth(ctx context.Context, user *User, deviceName, devi
 		return nil, fmt.Errorf("failed to generate tokens: %w", err)
 	}
 
-	if err := s.repo.UpdateSessionRefreshHash(ctx, session.ID, refreshToken, refreshExpiresAt); err != nil {
+	if err := s.repo.SetSessionRefreshHash(ctx, session.ID, refreshToken, refreshExpiresAt); err != nil {
 		return nil, fmt.Errorf("failed to store refresh token: %w", err)
 	}
 
 	// Update user online status
-	s.repo.UpdateUserOnlineStatus(ctx, user.ID, true)
+	if err := s.repo.UpdateUserOnlineStatus(ctx, user.ID, true); err != nil {
+		logger.Log.Error("Failed to mark user online", zap.Int64("user_id", user.ID), zap.Error(err))
+	}
 
 	return &RegisterResult{
 		User:             user,
@@ -151,6 +153,14 @@ func (s *Service) completeAuth(ctx context.Context, user *User, deviceName, devi
 		RefreshExpiresIn: s.cfg.JWT.RefreshTTL,
 	}, nil
 }
+
+// refreshReuseGraceWindow is how long after a rotation a resubmitted *previous*
+// refresh token is treated as a client retry rather than token theft. Rotation
+// and reuse detection pull in opposite directions: a double-submitted refresh
+// is indistinguishable from a replay unless the server remembers that it just
+// rotated. Thirty seconds comfortably covers a retry storm while keeping the
+// window useless to an attacker replaying a token harvested from an old log.
+const refreshReuseGraceWindow = 30 * time.Second
 
 func (s *Service) RefreshToken(ctx context.Context, refreshToken string) (accessToken, newRefreshToken string, err error) {
 	claims, err := s.tokenManager.ValidateRefreshToken(refreshToken)
@@ -177,9 +187,23 @@ func (s *Service) RefreshToken(ctx context.Context, refreshToken string) (access
 	// rainbow-tabled; the constant-time compare keeps the check itself from
 	// leaking timing information.
 	if !crypto.CheckToken(session.RefreshTokenHash, refreshToken) {
-		// The token is cryptographically valid but no longer the session's
-		// current refresh token — this is a replayed rotated-out token, a
-		// classic sign of theft. Revoke everything for this user.
+		// A digest mismatch means the presented token is not the session's
+		// current one. That is either theft (a rotated-out token replayed) or a
+		// benign retry of a rotation that happened seconds ago. Only the second
+		// explanation is plausible inside the grace window, and revoking every
+		// session on a double-submit is a far worse failure than answering one
+		// retry with a retryable conflict.
+		if session.RefreshRotatedAt.Valid &&
+			time.Since(session.RefreshRotatedAt.Time) < refreshReuseGraceWindow {
+			logger.Log.Info("Refresh token resubmitted within rotation grace window",
+				zap.Int64("user_id", session.UserID),
+				zap.Int64("session_id", session.ID),
+			)
+			return "", "", apperrors.ErrRefreshConflict
+		}
+
+		// Outside the window this is a replayed rotated-out token, a classic
+		// sign of theft. Revoke everything for this user.
 		logger.Log.Warn("Refresh token reuse detected, revoking all sessions",
 			zap.Int64("user_id", session.UserID),
 			zap.Int64("session_id", session.ID),
@@ -199,8 +223,20 @@ func (s *Service) RefreshToken(ctx context.Context, refreshToken string) (access
 		return "", "", fmt.Errorf("failed to generate new tokens: %w", err)
 	}
 
-	if err := s.repo.UpdateSessionRefreshHash(ctx, session.ID, newRefreshToken, newRefreshExpiresAt); err != nil {
+	rotated, err := s.repo.RotateSessionRefreshHash(ctx, session.ID, refreshToken, newRefreshToken, newRefreshExpiresAt)
+	if err != nil {
 		return "", "", fmt.Errorf("failed to store rotated refresh token: %w", err)
+	}
+	if !rotated {
+		// Lost a concurrent rotation race: the token we validated was the
+		// session's current one when we read it, so this is a double-submit
+		// (client retry, or two devices sharing a token), not theft. Report a
+		// retryable conflict and deliberately leave every session intact.
+		logger.Log.Info("Concurrent refresh rotation detected",
+			zap.Int64("user_id", session.UserID),
+			zap.Int64("session_id", session.ID),
+		)
+		return "", "", apperrors.ErrRefreshConflict
 	}
 
 	return newAccessToken, newRefreshToken, nil

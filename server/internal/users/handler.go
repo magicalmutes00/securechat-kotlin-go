@@ -49,7 +49,10 @@ type UserResponse struct {
 }
 
 func (h *Handler) GetProfile(c *fiber.Ctx) error {
-	userID := c.Locals("user_id").(int64)
+	userID, ok := middleware.UserID(c)
+	if !ok {
+		return c.Status(401).JSON(apperrors.NewErrorResponse(apperrors.ErrUnauthorized))
+	}
 
 	user, err := h.service.GetProfile(c.Context(), userID)
 	if err != nil {
@@ -68,7 +71,10 @@ func (h *Handler) GetProfile(c *fiber.Ctx) error {
 }
 
 func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
-	userID := c.Locals("user_id").(int64)
+	userID, ok := middleware.UserID(c)
+	if !ok {
+		return c.Status(401).JSON(apperrors.NewErrorResponse(apperrors.ErrUnauthorized))
+	}
 
 	var req UpdateProfileRequest
 	if err := c.BodyParser(&req); err != nil {
