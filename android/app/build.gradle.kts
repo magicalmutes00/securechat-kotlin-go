@@ -15,6 +15,12 @@ android {
     namespace = "com.securechat"
     compileSdk = libs.versions.compileSdk.get().toInt()
 
+    // Pinned so AGP can find llvm-strip. Without an explicit ndkVersion the strip
+    // task reports "missing strip tool for ABI" and packages the libsignal
+    // natives unstripped — about 240 MB of debug symbols in the release APK.
+    // Android Studio installs this NDK on sync if it is absent.
+    ndkVersion = "28.2.13676358"
+
     defaultConfig {
         // Must match the Firebase app registration in google-services.json
         // (project chatgo-364a2). The code namespace stays com.securechat.
@@ -43,6 +49,19 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1,LICENSE,LICENSE.txt,NOTICE,NOTICE.txt}"
+            // libsignal ships its JVM (desktop) natives inside the dependency's
+            // JAR resources: macOS dylibs and Windows DLLs for aarch64/amd64.
+            // Only the JVM unit tests need them, and packaging them added about
+            // 110 MB of binaries no Android device can load.
+            excludes += "**/*.dylib"
+            excludes += "**/*.dll"
+        }
+        jniLibs {
+            // libsignal_jni_testing.so is the instrumented-test build of the
+            // native library, with test-only entry points compiled in. Nothing in
+            // this app loads it - production uses libsignal_jni.so - and it was
+            // ~269 MB across four ABIs.
+            excludes += "**/libsignal_jni_testing.so"
         }
     }
 
@@ -61,7 +80,10 @@ android {
                 "-opt-in=kotlin.RequiresOptIn",
                 "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi",
                 "-opt-in=kotlinx.serialization.ExperimentalSerializationApi",
-                "-opt-in=androidx.lifecycle.ExperimentalLifecycleApi",
+                // androidx.lifecycle.ExperimentalLifecycleApi deliberately absent:
+                // it only exists from lifecycle 2.8.0, this project pins 2.7.0, and
+                // nothing uses it — the flag just emitted an "unresolved opt-in
+                // marker" warning on every compilation.
                 "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api"
             )
         }

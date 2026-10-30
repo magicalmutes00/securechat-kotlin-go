@@ -50,6 +50,16 @@
 -keep class kotlinx.coroutines.** { *; }
 -keep class kotlinx.serialization.** { *; }
 
+# Ktor probes the JVM's management API to detect an attached debugger
+# (io.ktor.util.debug.IntellijIdeaDebugDetector). java.lang.management does not
+# exist on Android - there is no JVM there to manage - and the detector only
+# serves Ktor's IntelliJ integration, so it is never reached on device. R8 fails
+# a release build on the unresolved references, so they are suppressed here
+# rather than by narrowing the broad io.ktor keep rule above, which exists to
+# protect Ktor's reflective internals.
+-dontwarn java.lang.management.ManagementFactory
+-dontwarn java.lang.management.RuntimeMXBean
+
 # ============================================
 # Coil
 # ============================================

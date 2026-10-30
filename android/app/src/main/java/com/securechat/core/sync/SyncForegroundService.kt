@@ -118,7 +118,10 @@ class SyncForegroundService : LifecycleService() {
 
     override fun onDestroy() {
         releaseWakeLock()
-        stopForeground(true)
+        // The boolean overload was deprecated in API 33. The int form exists from
+        // API 24, which is this app's minSdk, so there is no reason to keep the
+        // deprecated call.
+        stopForeground(Service.STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
 }

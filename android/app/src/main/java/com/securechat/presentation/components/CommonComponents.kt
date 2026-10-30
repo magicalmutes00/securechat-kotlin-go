@@ -105,13 +105,15 @@ fun EmptyState(
             textAlign = TextAlign.Center
         )
         
-        actionText?.let { text ->
+        // The button only exists when it has both a label and somewhere to go.
+        // The previous form forced `onAction!!` and then tested it for null: the
+        // test was unreachable (hence "condition is always true") and the assert
+        // was an NPE for any caller that set actionText without a handler.
+        val action = onAction
+        if (actionText != null && action != null) {
             Spacer(modifier = Modifier.padding(24.dp))
-            Button(
-                onClick = onAction!!,
-                enabled = onAction != null
-            ) {
-                Text(text)
+            Button(onClick = action) {
+                Text(actionText)
             }
         }
     }
