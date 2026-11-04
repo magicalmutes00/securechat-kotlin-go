@@ -51,11 +51,14 @@ suspend fun completeUpload(request: CompleteUploadRequest): Result<MediaDto>
     // E2EE keys
     suspend fun publishIdentityKey(request: PublishIdentityRequest): Result<Unit>
     suspend fun publishSignedPreKey(request: PublishSignedPreKeyRequest): Result<Unit>
+    suspend fun publishKyberPreKey(request: PublishKyberPreKeyRequest): Result<Unit>
     suspend fun publishOneTimePreKeys(request: PublishOneTimePreKeysRequest): Result<Int>
     suspend fun getUnclaimedPreKeyCount(): Result<Long>
+    suspend fun claimPreKeyBundles(request: ClaimPreKeyBundlesRequest): Result<ClaimPreKeyBundlesResponse>
 
     // Devices
     suspend fun getDevices(): Result<List<DeviceDto>>
+    suspend fun getUserDevices(userId: Long): Result<List<DeviceDto>>
     suspend fun revokeDevice(id: Long): Result<Unit>
 }
 
@@ -278,6 +281,14 @@ class ApiServiceImpl(
         }
     }
 
+    override suspend fun publishKyberPreKey(request: PublishKyberPreKeyRequest): Result<Unit> = executeRequest {
+        client.put("$baseUrl/keys/kyber-prekey") {
+            headers { authHeader().forEach { (k, v) -> append(k, v) } }
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }
+    }
+
     override suspend fun publishOneTimePreKeys(request: PublishOneTimePreKeysRequest): Result<Int> = executeRequest {
         client.post("$baseUrl/keys/one-time-prekeys") {
             headers { authHeader().forEach { (k, v) -> append(k, v) } }
@@ -298,6 +309,14 @@ class ApiServiceImpl(
         return when (response) {
             is Result.Success -> Result.success(response.data.unclaimed)
             is Result.Failure -> Result.failure(response.exception)
+        }
+    }
+
+    override suspend fun claimPreKeyBundles(request: ClaimPreKeyBundlesRequest): Result<ClaimPreKeyBundlesResponse> = executeRequest {
+        client.post("$baseUrl/keys/claim") {
+            headers { authHeader().forEach { (k, v) -> append(k, v) } }
+            contentType(ContentType.Application.Json)
+            setBody(request)
         }
     }
 
@@ -337,6 +356,12 @@ class ApiServiceImpl(
 
     override suspend fun getDevices(): Result<List<DeviceDto>> = executeRequest {
         client.get("$baseUrl/devices") {
+            headers { authHeader().forEach { (k, v) -> append(k, v) } }
+        }
+    }
+
+    override suspend fun getUserDevices(userId: Long): Result<List<DeviceDto>> = executeRequest {
+        client.get("$baseUrl/users/$userId/devices") {
             headers { authHeader().forEach { (k, v) -> append(k, v) } }
         }
     }

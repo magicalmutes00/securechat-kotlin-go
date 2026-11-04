@@ -98,6 +98,12 @@ var (
 	// WebSocket errors
 	ErrWSAuthFailed       = New("WS_AUTH_FAILED", "WebSocket authentication failed", http.StatusUnauthorized)
 	ErrWSConnectionLimit  = New("WS_CONNECTION_LIMIT", "Connection limit exceeded", http.StatusTooManyRequests)
+
+	// E2EE envelope errors. Envelopes are opaque ciphertext blobs the server
+	// stores and relays but never opens.
+	ErrEnvelopeTooLarge = New("ENVELOPE_TOO_LARGE", "Message envelope exceeds maximum size", http.StatusBadRequest)
+	ErrEnvelopeInvalid  = New("ENVELOPE_INVALID", "Invalid message envelope", http.StatusBadRequest)
+	ErrEnvelopeNotFound = New("ENVELOPE_NOT_FOUND", "Message envelope not found", http.StatusNotFound)
 )
 
 // ErrorResponse is the standard API error response

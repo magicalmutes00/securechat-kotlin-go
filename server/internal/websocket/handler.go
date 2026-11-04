@@ -3,12 +3,14 @@ package websocket
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"sync"
 	"time"
 
 	"github.com/gofiber/websocket/v2"
 	"github.com/securechat/server/internal/auth"
+	"github.com/securechat/server/internal/devices"
 	"github.com/securechat/server/internal/media"
 	"github.com/securechat/server/internal/messages"
 	"github.com/securechat/server/pkg/logger"
@@ -28,6 +30,16 @@ const (
 	maxMessageSize = 64 * 1024
 	// dbTimeout bounds a single database call made on behalf of a socket.
 	dbTimeout = 5 * time.Second
+
+	// Envelope types mirror the Signal message wire types so the receiving
+	// client can route to SessionBuilder (PreKeySignalMessage) vs SessionCipher
+	// (SignalMessage). Opaque to the server.
+	EnvelopeTypePreKeySignal = 1
+	EnvelopeTypeSignal       = 2
+
+	// Max ciphertext bytes per envelope. Keeps a single WebSocket frame (and a
+	// single DB row) bounded even when a client pads or misbehaves.
+	MaxEnvelopeBytes = 64 * 1024
 )
 
 type Hub struct {
@@ -74,13 +86,22 @@ type AuthAckPayload struct {
 	DeviceID int64 `json:"device_id"`
 }
 
+type EnvelopePayload struct {
+	RecipientDeviceID int64  `json:"recipient_device_id"`
+	EnvelopeType      int    `json:"envelope_type"`
+	Ciphertext        string `json:"ciphertext"` // base64, opaque to the server
+}
+
 type MessageSendPayload struct {
-	ConversationID int64  `json:"conversation_id"`
-	Type           string `json:"type"`
-	Text           string `json:"text,omitempty"`
-	MediaID        *int64 `json:"media_id,omitempty"`
-	ReplyToID      *int64 `json:"reply_to_id,omitempty"`
-	TempID         string `json:"temp_id"`
+	ConversationID int64            `json:"conversation_id"`
+	Type           string           `json:"type"`
+	// Text is the legacy plaintext path. E2EE clients send envelopes instead and
+	// leave text empty; the server stores neither side's plaintext for envelopes.
+	Text          string             `json:"text,omitempty"`
+	Envelopes     []EnvelopePayload  `json:"envelopes,omitempty"`
+	MediaID       *int64             `json:"media_id,omitempty"`
+	ReplyToID     *int64             `json:"reply_to_id,omitempty"`
+	TempID        string             `json:"temp_id"`
 }
 
 type TypingPayload struct {
@@ -386,6 +407,27 @@ func (c *Client) handleMessageSend(tempID string, payload json.RawMessage) {
 		return
 	}
 
+	if len(msgSend.Envelopes) == 0 && msgSend.Text == "" {
+		c.sendError("INVALID_MESSAGE", "Message must carry text or envelopes")
+		return
+	}
+	for _, env := range msgSend.Envelopes {
+		if env.RecipientDeviceID == 0 {
+			c.sendError("ENVELOPE_INVALID", "Envelope missing recipient device")
+			return
+		}
+		if env.EnvelopeType != EnvelopeTypePreKeySignal && env.EnvelopeType != EnvelopeTypeSignal {
+			c.sendError("ENVELOPE_INVALID", "Unknown envelope type")
+			return
+		}
+		ciphertext, err := base64.StdEncoding.DecodeString(env.Ciphertext)
+		if err != nil || len(ciphertext) == 0 || len(ciphertext) > MaxEnvelopeBytes {
+			c.sendError("ENVELOPE_INVALID", "Envelope ciphertext invalid or too large")
+			return
+		}
+		_ = ciphertext
+	}
+
 	// Bounded to dbTimeout and to this connection's lifetime, so a slow query
 	// cannot pin the read pump and is abandoned when the socket dies.
 	ctx, cancel := c.dbCtx()
@@ -397,8 +439,29 @@ func (c *Client) handleMessageSend(tempID string, payload json.RawMessage) {
 		SELECT EXISTS(SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2 AND left_at IS NULL)
 	`, msgSend.ConversationID, c.userID).Scan(&isParticipant)
 	if err != nil || !isParticipant {
-		c.sendError("NOT_PARTICIPANT", "Not a participant in this conversation")
+		c.sendError("NOT_PARTICICPANT", "Not a participant in this conversation")
 		return
+	}
+
+	// Validate each envelope is addressed to a device of a conversation
+	// participant — never to an outsider's device.
+	deviceService := devices.NewService(devices.NewRepository(c.hub.db))
+	participantDeviceIDs, err := deviceService.ParticipantDeviceIDs(ctx, msgSend.ConversationID)
+	if err != nil {
+		logger.Log.Error("Failed to load participant devices",
+			zap.Int64("conversation_id", msgSend.ConversationID), zap.Error(err))
+		c.sendError("MESSAGE_FAILED", "Failed to send message")
+		return
+	}
+	allowed := make(map[int64]bool, len(participantDeviceIDs))
+	for _, id := range participantDeviceIDs {
+		allowed[id] = true
+	}
+	for _, env := range msgSend.Envelopes {
+		if !allowed[env.RecipientDeviceID] {
+			c.sendError("ENVELOPE_INVALID", "Envelope addressed to a non-participant device")
+			return
+		}
 	}
 
 	// Create message in database
@@ -411,6 +474,7 @@ func (c *Client) handleMessageSend(tempID string, payload json.RawMessage) {
 		MediaID:        toNullInt64(msgSend.MediaID),
 		ReplyToID:      toNullInt64(msgSend.ReplyToID),
 		Status:         "sent",
+		ContentType:    contentType(msgSend.Envelopes),
 	}
 
 	createdMsg, err := msgRepo.Create(ctx, msg)
@@ -418,6 +482,43 @@ func (c *Client) handleMessageSend(tempID string, payload json.RawMessage) {
 		logger.Log.Error("Failed to create message", zap.Error(err))
 		c.sendError("MESSAGE_FAILED", "Failed to send message")
 		return
+	}
+
+	// Store one envelope per recipient device and fan each out to that device's
+	// live sockets. The server never opens ciphertext.
+	if len(msgSend.Envelopes) > 0 {
+		for _, env := range msgSend.Envelopes {
+			ciphertext, _ := base64.StdEncoding.DecodeString(env.Ciphertext)
+			if err := msgRepo.CreateEnvelope(ctx, createdMsg.ID, env.RecipientDeviceID, env.EnvelopeType, ciphertext); err != nil {
+				logger.Log.Error("Failed to create envelope",
+					zap.Int64("message_id", createdMsg.ID),
+					zap.Int64("recipient_device_id", env.RecipientDeviceID),
+					zap.Error(err))
+				c.sendError("MESSAGE_FAILED", "Failed to send message")
+				return
+			}
+			// Broadcast this envelope to the recipient device's socket only.
+			c.hub.broadcastToDevice(env.RecipientDeviceID, c, WSMessage{
+				Type: "MESSAGE_RECEIVED",
+				Payload: mustMarshal(map[string]interface{}{
+					"message": map[string]interface{}{
+						"id":             createdMsg.ID,
+						"conversation_id": msgSend.ConversationID,
+						"sender_id":      c.userID,
+						"type":           msgSend.Type,
+						"media_id":       mediaIDValue(msgSend.MediaID),
+						"reply_to_id":    mediaIDValue(msgSend.ReplyToID),
+						"status":         "sent",
+						"created_at":     createdMsg.CreatedAt.UnixMilli(),
+						"updated_at":     createdMsg.UpdatedAt.UnixMilli(),
+					},
+					"envelope": map[string]interface{}{
+						"envelope_type": env.EnvelopeType,
+						"ciphertext":    env.Ciphertext,
+					},
+				}),
+			})
+		}
 	}
 
 	// Link uploaded media to the created message so the media row is reachable
@@ -451,14 +552,16 @@ func (c *Client) handleMessageSend(tempID string, payload json.RawMessage) {
 	}
 	c.sendMessage(ack)
 
-	// Broadcast to other participants (and the sender's other devices) so
-	// multi-device clients stay in sync.
-	c.hub.broadcastToConversation(msgSend.ConversationID, c, WSMessage{
-		Type: "MESSAGE_RECEIVED",
-		Payload: mustMarshal(MessageReceivedPayload{
-			Message: toMessageResponse(createdMsg),
-		}),
-	})
+	// Legacy plaintext path: broadcast the full message to other participants
+	// (and the sender's other devices) so multi-device clients stay in sync.
+	if len(msgSend.Envelopes) == 0 {
+		c.hub.broadcastToConversation(msgSend.ConversationID, c, WSMessage{
+			Type: "MESSAGE_RECEIVED",
+			Payload: mustMarshal(MessageReceivedPayload{
+				Message: toMessageResponse(createdMsg),
+			}),
+		})
+	}
 }
 
 func (c *Client) handleTyping(payload json.RawMessage, isStart bool) {
@@ -547,6 +650,15 @@ func (c *Client) handleMessageDelivered(payload json.RawMessage) {
 
 	if err := msgRepo.UpdateStatus(ctx, delivered.MessageID, "delivered"); err != nil {
 		logger.Log.Error("Failed to update delivery status", zap.Error(err))
+	}
+
+	// Mark this device's envelope delivered so senders can tell which
+	// destinations have their copy (envelopes are per-device, not per-user).
+	if err := msgRepo.MarkEnvelopeDelivered(ctx, delivered.MessageID, c.deviceID); err != nil {
+		logger.Log.Error("Failed to mark envelope delivered",
+			zap.Int64("message_id", delivered.MessageID),
+			zap.Int64("device_id", c.deviceID),
+			zap.Error(err))
 	}
 
 	// Delivery receipts go back to the original sender (all their devices).
@@ -701,6 +813,29 @@ func (h *Hub) broadcastToConversation(conversationID int64, exclude *Client, msg
 	}
 }
 
+// broadcastToDevice sends msg to every live socket of a single device. The
+// device map is keyed by userID, so finding a specific device_id requires
+// scanning each user's client set — acceptable because fan-out targets one
+// device at a time.
+func (h *Hub) broadcastToDevice(deviceID int64, exclude *Client, msg WSMessage) {
+	data, _ := json.Marshal(msg)
+
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for _, clients := range h.clients {
+		for client := range clients {
+			if client.deviceID != deviceID {
+				continue
+			}
+			if client == exclude {
+				continue
+			}
+			client.queue(data)
+		}
+	}
+}
+
 func (h *Hub) updateUserOnlineStatus(userID int64, isOnline bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
@@ -788,6 +923,24 @@ func nullIfZero(v int64, valid bool) interface{} {
 		return nil
 	}
 	return v
+}
+
+// mediaIDValue returns the pointer value as-is, or nil when absent — mirroring
+// how toMessageResponse surfaces media/reply IDs without the zero-value trap.
+func mediaIDValue(i *int64) interface{} {
+	if i == nil {
+		return nil
+	}
+	return *i
+}
+
+// contentType reports 'e2ee' when the message carries per-device envelopes,
+// 'legacy_plaintext' for the plaintext path. Mirrors the migration's values.
+func contentType(envelopes []EnvelopePayload) string {
+	if len(envelopes) > 0 {
+		return "e2ee"
+	}
+	return "legacy_plaintext"
 }
 
 func WebSocketHandler(db *sql.DB, tokenMgr *auth.TokenManager) func(*websocket.Conn) {

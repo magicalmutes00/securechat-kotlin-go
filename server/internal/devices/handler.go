@@ -53,6 +53,33 @@ func (r *Repository) GetByUserID(ctx context.Context, userID int64) ([]*Device, 
 	return devices, nil
 }
 
+// ParticipantDeviceIDs returns the device ids of all active participants of a
+// conversation, used to validate that E2EE envelopes are addressed to real
+// conversation participants (and not to devices of outsiders).
+func (r *Repository) ParticipantDeviceIDs(ctx context.Context, conversationID int64) ([]int64, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT d.id
+		FROM devices d
+		JOIN conversation_participants cp
+			ON cp.user_id = d.user_id
+		WHERE cp.conversation_id = $1 AND cp.left_at IS NULL
+	`, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
 func (r *Repository) Revoke(ctx context.Context, deviceID, userID int64) error {
 	// Verify ownership
 	var ownerID int64
@@ -78,6 +105,13 @@ func NewService(repo *Repository) *Service {
 
 func (s *Service) GetDevices(ctx context.Context, userID int64) ([]*Device, error) {
 	return s.repo.GetByUserID(ctx, userID)
+}
+
+// ParticipantDeviceIDs returns the device ids of all active participants of a
+// conversation, used to validate that E2EE envelopes are addressed to real
+// conversation participants.
+func (s *Service) ParticipantDeviceIDs(ctx context.Context, conversationID int64) ([]int64, error) {
+	return s.repo.ParticipantDeviceIDs(ctx, conversationID)
 }
 
 func (s *Service) RevokeDevice(ctx context.Context, deviceID, userID int64) error {

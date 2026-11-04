@@ -61,6 +61,23 @@ func (s *Service) DeleteMessage(ctx context.Context, messageID, userID int64) er
 	return s.repo.SoftDelete(ctx, messageID, userID)
 }
 
+// CreateEnvelope stores one per-recipient-device envelope for a message.
+func (s *Service) CreateEnvelope(ctx context.Context, messageID, recipientDeviceID int64, envelopeType int, ciphertext []byte) error {
+	return s.repo.CreateEnvelope(ctx, messageID, recipientDeviceID, envelopeType, ciphertext)
+}
+
+// GetEnvelope returns the envelope addressed to recipientDeviceID for messageID.
+func (s *Service) GetEnvelope(ctx context.Context, messageID, recipientDeviceID int64) (*Envelope, error) {
+	return s.repo.GetEnvelope(ctx, messageID, recipientDeviceID)
+}
+
+// GetEnvelopes returns the envelopes addressed to recipientDeviceID for the
+// given message ids, keyed by message id. Missing envelopes are absent from
+// the map rather than an error.
+func (s *Service) GetEnvelopes(ctx context.Context, messageIDs []int64, recipientDeviceID int64) (map[int64]*Envelope, error) {
+	return s.repo.GetEnvelopes(ctx, messageIDs, recipientDeviceID)
+}
+
 func toNullString(s string) sql.NullString {
 	if s != "" {
 		return sql.NullString{String: s, Valid: true}

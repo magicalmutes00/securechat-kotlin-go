@@ -3,10 +3,12 @@ package users
 import (
 	"database/sql"
 	"errors"
+	"strconv"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/securechat/server/config"
 	"github.com/securechat/server/internal/auth"
+	"github.com/securechat/server/internal/devices"
 	"github.com/securechat/server/internal/middleware"
 	apperrors "github.com/securechat/server/pkg/errors"
 	"github.com/securechat/server/pkg/logger"
@@ -19,13 +21,17 @@ type Handler struct {
 
 func RegisterRoutes(api fiber.Router, db *sql.DB, tokenManager *auth.TokenManager, cfg *config.Config) {
 	repo := NewRepository(db)
-	service := NewService(repo)
+	devicesRepo := devices.NewRepository(db)
+	service := NewService(repo, devicesRepo)
 	handler := &Handler{service: service}
 
 	users := api.Group("/users", middleware.JWTAuth(tokenManager, middleware.NewDBSessionChecker(db)))
 	users.Get("/me", handler.GetProfile)
 	users.Patch("/me", handler.UpdateProfile)
 	users.Get("/search", handler.SearchUsers)
+	// Fan-out discovery: the devices of a user a client is in a conversation with,
+	// so the sender can build one envelope per destination device.
+	users.Get("/:id/devices", handler.GetDevices)
 }
 
 type UpdateProfileRequest struct {
@@ -155,4 +161,61 @@ func nullInt64Ptr(ni sql.NullInt64) *int64 {
 		return &ni.Int64
 	}
 	return nil
+}
+
+// GetDevices returns the devices of the given user. The caller must share a
+// conversation with that user; without this gate the endpoint would enumerate
+// every user's device list.
+func (h *Handler) GetDevices(c *fiber.Ctx) error {
+	_, ok := middleware.UserID(c)
+	if !ok {
+		return c.Status(401).JSON(apperrors.NewErrorResponse(apperrors.ErrUnauthorized))
+	}
+
+	targetID, err := strconv.ParseInt(c.Params("id"), 10, 64)
+	if err != nil {
+		return c.Status(400).JSON(apperrors.NewErrorResponse(apperrors.ErrInvalidRequest))
+	}
+
+	targetDevices, err := h.service.GetUserDevices(c.Context(), targetID)
+	if err != nil {
+		logger.Log.Error("Failed to get devices", zap.Int64("target_user_id", targetID), zap.Error(err))
+		return c.Status(500).JSON(apperrors.NewErrorResponse(apperrors.ErrInternalServer))
+	}
+
+	response := make([]struct {
+		ID               int64   `json:"id"`
+		DeviceName       string  `json:"device_name"`
+		DeviceIdentifier string  `json:"device_identifier"`
+		Platform         string  `json:"platform"`
+		CreatedAt        int64   `json:"created_at"`
+		LastSeen         *int64  `json:"last_seen,omitempty"`
+	}, len(targetDevices))
+	for i, d := range targetDevices {
+		var lastSeen *int64
+		if d.LastSeen.Valid {
+			ts := d.LastSeen.Time.UnixMilli()
+			lastSeen = &ts
+		}
+		response[i] = struct {
+			ID               int64   `json:"id"`
+			DeviceName       string  `json:"device_name"`
+			DeviceIdentifier string  `json:"device_identifier"`
+			Platform         string  `json:"platform"`
+			CreatedAt        int64   `json:"created_at"`
+			LastSeen         *int64  `json:"last_seen,omitempty"`
+		}{
+			ID:               d.ID,
+			DeviceName:       d.DeviceName,
+			DeviceIdentifier: d.DeviceIdentifier,
+			Platform:         d.Platform,
+			CreatedAt:        d.CreatedAt.UnixMilli(),
+			LastSeen:         lastSeen,
+		}
+	}
+
+	return c.JSON(fiber.Map{
+		"success": true,
+		"data":    response,
+	})
 }

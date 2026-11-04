@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/securechat/server/pkg/errors"
+	stderrors "errors"
 )
 
 type Repository struct {
@@ -25,17 +26,18 @@ type Message struct {
 	SenderID       int64
 	// SenderName is the author's display name at read time. Group chats need it
 	// on every message; it is NULL only if the sender's row has vanished.
-	SenderName  sql.NullString
-	Type        string
-	Text        sql.NullString
-	MediaID     sql.NullInt64
-	ReplyToID   sql.NullInt64
-	Status      string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	DeliveredAt sql.NullTime
-	ReadAt      sql.NullTime
-	DeletedAt   sql.NullTime
+	SenderName   sql.NullString
+	Type         string
+	Text         sql.NullString
+	MediaID      sql.NullInt64
+	ReplyToID    sql.NullInt64
+	Status       string
+	ContentType  string // 'legacy_plaintext' or 'e2ee'; tells the client whether to decrypt
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	DeliveredAt  sql.NullTime
+	ReadAt       sql.NullTime
+	DeletedAt    sql.NullTime
 	// Media is the attachment row referenced by MediaID, loaded by attachMedia.
 	// Not a column: it is resolved by a second query so the message queries stay
 	// readable and neither of them repeats thirteen scan targets.
@@ -226,7 +228,7 @@ func (r *Repository) GetByConversation(ctx context.Context, conversationID, user
 	// message, and a user account can in principle be missing (or the sender's
 	// row gone), so a plain JOIN would silently drop those messages from history.
 	query := `
-		SELECT m.id, m.conversation_id, m.sender_id, m.type, m.text, m.media_id, m.reply_to_id, m.status,
+		SELECT m.id, m.conversation_id, m.sender_id, m.type, m.text, m.media_id, m.reply_to_id, m.status, m.content_type,
 		       m.created_at, m.updated_at, m.delivered_at, m.read_at, m.deleted_at,
 		       u.display_name
 		FROM messages m
@@ -254,7 +256,7 @@ func (r *Repository) GetByConversation(ctx context.Context, conversationID, user
 	var messages []*Message
 	for rows.Next() {
 		var msg Message
-		if err := rows.Scan(&msg.ID, &msg.ConversationID, &msg.SenderID, &msg.Type, &msg.Text, &msg.MediaID, &msg.ReplyToID, &msg.Status, &msg.CreatedAt, &msg.UpdatedAt, &msg.DeliveredAt, &msg.ReadAt, &msg.DeletedAt, &msg.SenderName); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.ConversationID, &msg.SenderID, &msg.Type, &msg.Text, &msg.MediaID, &msg.ReplyToID, &msg.Status, &msg.ContentType, &msg.CreatedAt, &msg.UpdatedAt, &msg.DeliveredAt, &msg.ReadAt, &msg.DeletedAt, &msg.SenderName); err != nil {
 			return nil, err
 		}
 		messages = append(messages, &msg)
@@ -294,10 +296,10 @@ func (r *Repository) GetByConversation(ctx context.Context, conversationID, user
 func (r *Repository) Create(ctx context.Context, msg *Message) (*Message, error) {
 	var id int64
 	err := r.db.QueryRowContext(ctx, `
-		INSERT INTO messages (conversation_id, sender_id, type, text, media_id, reply_to_id, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+		INSERT INTO messages (conversation_id, sender_id, type, text, media_id, reply_to_id, status, content_type, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
 		RETURNING id
-	`, msg.ConversationID, msg.SenderID, msg.Type, msg.Text, msg.MediaID, msg.ReplyToID, msg.Status).Scan(&id)
+	`, msg.ConversationID, msg.SenderID, msg.Type, msg.Text, msg.MediaID, msg.ReplyToID, msg.Status, msg.ContentType).Scan(&id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create message: %w", err)
 	}
@@ -308,13 +310,13 @@ func (r *Repository) Create(ctx context.Context, msg *Message) (*Message, error)
 func (r *Repository) GetByID(ctx context.Context, id int64) (*Message, error) {
 	var msg Message
 	err := r.db.QueryRowContext(ctx, `
-		SELECT m.id, m.conversation_id, m.sender_id, m.type, m.text, m.media_id, m.reply_to_id, m.status,
+		SELECT m.id, m.conversation_id, m.sender_id, m.type, m.text, m.media_id, m.reply_to_id, m.status, m.content_type,
 		       m.created_at, m.updated_at, m.delivered_at, m.read_at, m.deleted_at,
 		       u.display_name
 		FROM messages m
 		LEFT JOIN users u ON u.id = m.sender_id
 		WHERE m.id = $1
-	`, id).Scan(&msg.ID, &msg.ConversationID, &msg.SenderID, &msg.Type, &msg.Text, &msg.MediaID, &msg.ReplyToID, &msg.Status, &msg.CreatedAt, &msg.UpdatedAt, &msg.DeliveredAt, &msg.ReadAt, &msg.DeletedAt, &msg.SenderName)
+	`, id).Scan(&msg.ID, &msg.ConversationID, &msg.SenderID, &msg.Type, &msg.Text, &msg.MediaID, &msg.ReplyToID, &msg.Status, &msg.ContentType, &msg.CreatedAt, &msg.UpdatedAt, &msg.DeliveredAt, &msg.ReadAt, &msg.DeletedAt, &msg.SenderName)
 	if err != nil {
 		return nil, err
 	}
@@ -377,4 +379,102 @@ func (r *Repository) BelongsToConversation(ctx context.Context, messageID, conve
 		SELECT EXISTS(SELECT 1 FROM messages WHERE id = $1 AND conversation_id = $2)
 	`, messageID, conversationID).Scan(&belongs)
 	return belongs, err
+}
+
+// Envelope is one per-recipient-device ciphertext blob for a message. The
+// ciphertext is opaque to the server; only the destination device can open it.
+type Envelope struct {
+	EnvelopeType   int
+	Ciphertext     []byte
+	DeliveredAt    *int64
+}
+
+// CreateEnvelope stores one per-recipient-device envelope for a message.
+func (r *Repository) CreateEnvelope(ctx context.Context, messageID, recipientDeviceID int64, envelopeType int, ciphertext []byte) error {
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO message_envelopes (message_id, recipient_device_id, envelope_type, ciphertext)
+		VALUES ($1, $2, $3, $4)
+	`, messageID, recipientDeviceID, envelopeType, ciphertext)
+	if err != nil {
+		return fmt.Errorf("failed to create message envelope: %w", err)
+	}
+	return nil
+}
+
+// GetEnvelope returns the envelope addressed to recipientDeviceID for messageID.
+// sql.ErrNoRows when none exists (e.g. the device is not a recipient).
+func (r *Repository) GetEnvelope(ctx context.Context, messageID, recipientDeviceID int64) (*Envelope, error) {
+	var e Envelope
+	var deliveredAt sql.NullTime
+	err := r.db.QueryRowContext(ctx, `
+		SELECT envelope_type, ciphertext, delivered_at
+		FROM message_envelopes
+		WHERE message_id = $1 AND recipient_device_id = $2
+	`, messageID, recipientDeviceID).Scan(&e.EnvelopeType, &e.Ciphertext, &deliveredAt)
+	if err != nil {
+		if stderrors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get message envelope: %w", err)
+	}
+	if deliveredAt.Valid {
+		ts := deliveredAt.Time.UnixMilli()
+		e.DeliveredAt = &ts
+	}
+	return &e, nil
+}
+
+// MarkEnvelopeDelivered sets delivered_at on the envelope addressed to
+// recipientDeviceID for messageID, idempotently.
+func (r *Repository) MarkEnvelopeDelivered(ctx context.Context, messageID, recipientDeviceID int64) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE message_envelopes
+		SET delivered_at = NOW()
+		WHERE message_id = $1 AND recipient_device_id = $2 AND delivered_at IS NULL
+	`, messageID, recipientDeviceID)
+	return err
+}
+
+// GetEnvelopes returns the envelopes addressed to recipientDeviceID for each
+// of messageIDs, keyed by message id. A message with no envelope for this
+// device is absent from the map.
+func (r *Repository) GetEnvelopes(ctx context.Context, messageIDs []int64, recipientDeviceID int64) (map[int64]*Envelope, error) {
+	if len(messageIDs) == 0 {
+		return map[int64]*Envelope{}, nil
+	}
+	query := fmt.Sprintf(`
+		SELECT message_id, envelope_type, ciphertext, delivered_at
+		FROM message_envelopes
+		WHERE message_id IN (%s) AND recipient_device_id = $%d
+	`, placeholders(len(messageIDs)), len(messageIDs)+1)
+	args := make([]interface{}, len(messageIDs)+1)
+	for i, id := range messageIDs {
+		args[i] = id
+	}
+	args[len(messageIDs)] = recipientDeviceID
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get message envelopes: %w", err)
+	}
+	defer rows.Close()
+
+	envelopes := make(map[int64]*Envelope)
+	for rows.Next() {
+		var messageID int64
+		var e Envelope
+		var deliveredAt sql.NullTime
+		if err := rows.Scan(&messageID, &e.EnvelopeType, &e.Ciphertext, &deliveredAt); err != nil {
+			return nil, fmt.Errorf("failed to scan message envelope: %w", err)
+		}
+		if deliveredAt.Valid {
+			ts := deliveredAt.Time.UnixMilli()
+			e.DeliveredAt = &ts
+		}
+		envelopes[messageID] = &e
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read message envelopes: %w", err)
+	}
+	return envelopes, nil
 }

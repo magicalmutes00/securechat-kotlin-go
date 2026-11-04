@@ -1,15 +1,21 @@
 package com.securechat.data.sync
 
+import com.securechat.core.common.Result
+import com.securechat.core.security.E2eeSessionManager
+import com.securechat.data.local.dao.ConversationParticipantDao
 import com.securechat.data.local.dao.MediaDao
 import com.securechat.data.local.dao.MessageDao
 import com.securechat.data.local.entity.MediaEntity
 import com.securechat.data.local.entity.MessageEntity
+import com.securechat.data.remote.api.ApiService
 import com.securechat.data.remote.dto.MediaDto
+import com.securechat.data.remote.websocket.EnvelopePayload
 import com.securechat.data.remote.websocket.WsEvent
+import com.securechat.data.remote.websocket.WebSocketManager
 import com.securechat.domain.model.MediaResourceType
 import com.securechat.domain.model.MessageStatus
 import com.securechat.domain.model.MessageType
-import com.securechat.data.remote.websocket.WebSocketManager
+import com.securechat.domain.repository.E2eeRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -17,6 +23,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import java.util.Base64
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -40,7 +47,9 @@ class WebSocketEventProcessor @Inject constructor(
     private val webSocketManager: WebSocketManager,
     private val messageDao: MessageDao,
     private val mediaDao: MediaDao,
-    private val conversationParticipantDao: com.securechat.data.local.dao.ConversationParticipantDao
+    private val conversationParticipantDao: com.securechat.data.local.dao.ConversationParticipantDao,
+    private val e2eeRepository: E2eeRepository,
+    private val apiService: ApiService
 ) {
     private var job: Job? = null
 
@@ -128,46 +137,107 @@ class WebSocketEventProcessor @Inject constructor(
     }
 
     private suspend fun handleReceived(event: WsEvent.MessageReceived) {
-        val dto = event.payload.message
+        val msgObj = event.payload.message
+        val serverId = msgObj["id"]?.toString()?.toLongOrNull() ?: return
+        val conversationId = msgObj["conversation_id"]?.toString()?.toLongOrNull() ?: return
+        val senderId = msgObj["sender_id"]?.toString()?.toLongOrNull() ?: 0L
+        val senderName = msgObj["sender_name"]?.toString() ?: senderId.toString()
+        val type = msgObj["type"]?.toString() ?: "text"
+        val text = msgObj["text"]?.toString() ?: ""
+        val status = msgObj["status"]?.toString() ?: "sent"
+        val createdAt = msgObj["created_at"]?.toString()?.toLongOrNull() ?: System.currentTimeMillis()
+        val updatedAt = msgObj["updated_at"]?.toString()?.toLongOrNull() ?: createdAt
+        val mediaId = msgObj["media_id"]?.toString()?.toLongOrNull()
+        val replyToId = msgObj["reply_to_id"]?.toString()?.toLongOrNull()
+        val deliveredAt = msgObj["delivered_at"]?.toString()?.toLongOrNull()
+        val readAt = msgObj["read_at"]?.toString()?.toLongOrNull()
+        val deletedAt = msgObj["deleted_at"]?.toString()?.toLongOrNull()
+
+        // E2EE: decrypt this device's envelope before inserting. Legacy plaintext
+        // messages have no envelope and are stored verbatim.
+        val finalText = if (event.payload.envelope != null) {
+            val env = event.payload.envelope!!
+            val ciphertext = Base64.getDecoder().decode(env.ciphertext)
+            val decrypted = e2eeRepository.decryptFrom(
+                senderDeviceId = senderId,
+                senderName = senderName,
+                envelopeType = env.envelope_type,
+                ciphertext = ciphertext
+            )
+            decrypted.map { String(it) }.getOrElse { text }
+        } else {
+            text
+        }
+
         // Dedupe: the same message can arrive via WS after a REST page load.
-        val existing = messageDao.getByServerId(dto.id).first()
+        val existing = messageDao.getByServerId(serverId).first()
         if (existing != null) {
             // The first copy may have been stored before its media existed (REST
             // page load racing the upload). Backfill the attachment instead of
             // returning, otherwise the bubble stays empty forever.
-            dto.media?.let { upsertMedia(it, existing.id) }
-            if (dto.media != null && existing.mediaId != dto.media.id) {
-                messageDao.update(existing.copy(mediaId = dto.media.id))
+            val mediaDto = msgObj["media"]?.let { mapMediaDto(it) }
+            mediaDto?.let { upsertMedia(it, existing.id) }
+            if (mediaDto != null && existing.mediaId != mediaDto.id) {
+                messageDao.update(existing.copy(mediaId = mediaDto.id))
             }
             return
         }
 
         val localId = messageDao.insert(
             MessageEntity(
-                serverId = dto.id,
-                conversationId = dto.conversation_id,
-                senderId = dto.sender_id,
-                senderName = dto.sender_name,
-                type = MessageType.fromStorage(dto.type).storageValue,
-                text = dto.text,
+                serverId = serverId,
+                conversationId = conversationId,
+                senderId = senderId,
+                senderName = senderName,
+                type = MessageType.fromStorage(type).storageValue,
+                text = finalText,
                 // The server media id, mirroring media.serverId so the
                 // MessageWithMedia relation resolves.
-                mediaId = dto.media?.id,
-                replyToId = dto.reply_to?.id,
+                mediaId = mediaId,
+                replyToId = replyToId,
                 // Normalised through fromStorage: the raw server string used to
                 // be stored verbatim, so a differently-cased or unknown status
                 // produced rows the DAO's lowercase queries never matched.
-                status = MessageStatus.fromStorage(dto.status).storageValue,
-                createdAt = dto.created_at,
-                updatedAt = dto.updated_at,
-                deliveredAt = dto.delivered_at,
-                readAt = dto.read_at,
-                deletedAt = dto.deleted_at,
+                status = MessageStatus.fromStorage(status).storageValue,
+                createdAt = createdAt,
+                updatedAt = updatedAt,
+                deliveredAt = deliveredAt,
+                readAt = readAt,
+                deletedAt = deletedAt,
                 isOptimistic = false
             )
         )
 
-        dto.media?.let { upsertMedia(it, localId) }
+        val mediaDto = msgObj["media"]?.let { mapMediaDto(it) }
+        mediaDto?.let { upsertMedia(it, localId) }
+    }
+
+    /**
+     * Parses a media attachment object from a flat WS payload (as sent by the
+     * server's MESSAGE_RECEIVED map form) into a MediaDto.
+     */
+    private fun mapMediaDto(raw: Any?): MediaDto? {
+        val obj = raw ?: return null
+        return try {
+            MediaDto(
+                id = (obj as? Number)?.toLong() ?: obj.toString().toLongOrNull() ?: 0,
+                message_id = null,
+                cloudinary_public_id = "",
+                resource_type = "raw",
+                secure_url = "",
+                original_filename = "",
+                mime_type = "",
+                file_size = 0,
+                width = null,
+                height = null,
+                duration = null,
+                sha256 = "",
+                thumbnail_url = null,
+                created_at = System.currentTimeMillis()
+            )
+        } catch (_: Exception) {
+            null
+        }
     }
 
     /**

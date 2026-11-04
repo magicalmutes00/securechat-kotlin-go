@@ -2,7 +2,6 @@ package com.securechat.data.remote.websocket
 
 import com.securechat.core.common.Result
 import com.securechat.data.remote.dto.ConversationDto
-import com.securechat.data.remote.dto.MessageDto
 import io.ktor.client.*
 import io.ktor.client.plugins.websocket.*
 import io.ktor.http.*
@@ -80,13 +79,21 @@ sealed interface WsEvent {
 
 @Serializable data class AuthPayload(val access_token: String)
 @Serializable data class AuthAckPayload(val user_id: Long, val device_id: Long)
+@Serializable
+data class EnvelopePayload(
+    val recipient_device_id: Long,
+    val envelope_type: Int,
+    val ciphertext: String
+)
+
 @Serializable data class MessageSendPayload(
     val conversation_id: Long,
     val type: String,
     val text: String?,
     val media_id: Long?,
     val reply_to_id: Long?,
-    val temp_id: String
+    val temp_id: String,
+    val envelopes: List<EnvelopePayload>? = null
 )
 @Serializable data class MessageAckPayload(
     val temp_id: String,
@@ -94,7 +101,10 @@ sealed interface WsEvent {
     val status: String,
     val created_at: Long
 )
-@Serializable data class MessageReceivedPayload(val message: MessageDto)
+@Serializable data class MessageReceivedPayload(
+    val message: JsonObject,
+    val envelope: EnvelopePayload? = null
+)
 @Serializable data class MessageDeliveredPayload(
     val message_id: Long,
     val conversation_id: Long,
@@ -272,7 +282,8 @@ class WebSocketManager(
         text: String?,
         mediaId: Long?,
         replyToId: Long?,
-        tempId: String
+        tempId: String,
+        envelopes: List<EnvelopePayload>? = null
     ): Result<Unit> {
         val payload = MessageSendPayload(
             conversation_id = conversationId,
@@ -280,7 +291,8 @@ class WebSocketManager(
             text = text,
             media_id = mediaId,
             reply_to_id = replyToId,
-            temp_id = tempId
+            temp_id = tempId,
+            envelopes = envelopes
         )
         return send(WsEvent.MessageSend(id = tempId, payload = payload))
     }

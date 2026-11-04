@@ -187,8 +187,50 @@ data class PublishIdentityRequest(
     val registration_id: Int
 )
 
+// Claim prekey bundles (POST /keys/claim). The server returns bundles keyed by
+// destination device, plus any requested devices that had no publish bundle.
+@Serializable
+data class ClaimPreKeyBundlesRequest(
+    val device_ids: List<Long>
+)
+
+@Serializable
+data class ClaimPreKeyBundleResponse(
+    val device_id: Long,
+    val identity_key: String,
+    val registration_id: Int,
+    val signed_pre_key_id: Int,
+    val signed_pre_key: String,
+    val signed_pre_key_sig: String,
+    val has_one_time_pre_key: Boolean,
+    val one_time_pre_key_id: Int?,
+    val one_time_pre_key: String?,
+    val has_kyber_pre_key: Boolean,
+    val kyber_pre_key_id: Int?,
+    val kyber_pre_key: String?,
+    val kyber_pre_key_sig: String?
+)
+
+@Serializable
+data class MissingDevice(
+    val device_id: Long
+)
+
+@Serializable
+data class ClaimPreKeyBundlesResponse(
+    val bundles: List<ClaimPreKeyBundleResponse>,
+    val missing: List<MissingDevice>
+)
+
 @Serializable
 data class PublishSignedPreKeyRequest(
+    val key_id: Int,
+    val public_key: ByteArray,
+    val identity_key_signature: ByteArray
+)
+
+@Serializable
+data class PublishKyberPreKeyRequest(
     val key_id: Int,
     val public_key: ByteArray,
     val identity_key_signature: ByteArray
@@ -225,7 +267,14 @@ data class MessageDto(
     val updated_at: Long,
     val delivered_at: Long? = null,
     val read_at: Long? = null,
-    val deleted_at: Long? = null
+    val deleted_at: Long? = null,
+    // 'legacy_plaintext' or 'e2ee'; tells the client whether to decrypt.
+    val content_type: String? = null,
+    // This device's per-recipient ciphertext envelope for E2EE messages. Base64
+    // wire form matching the Go server's []byte encoding. Null for legacy
+    // plaintext messages and for messages not addressed to this device.
+    val envelope_type: Int? = null,
+    val envelope_ciphertext: String? = null
 )
 
 @Serializable

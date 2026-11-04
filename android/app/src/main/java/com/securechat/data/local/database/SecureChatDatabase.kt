@@ -10,6 +10,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.securechat.data.local.dao.ConversationDao
 import com.securechat.data.local.dao.ConversationParticipantDao
 import com.securechat.data.local.dao.DeviceDao
+import com.securechat.data.local.dao.E2eeSessionDao
 import com.securechat.data.local.dao.MediaDao
 import com.securechat.data.local.dao.MessageDao
 import com.securechat.data.local.dao.PendingOperationDao
@@ -20,6 +21,7 @@ import com.securechat.data.local.dao.UserSettingsDao
 import com.securechat.data.local.entity.ConversationEntity
 import com.securechat.data.local.entity.ConversationParticipantEntity
 import com.securechat.data.local.entity.DeviceEntity
+import com.securechat.data.local.entity.E2eeSessionEntity
 import com.securechat.data.local.entity.MediaEntity
 import com.securechat.data.local.entity.MessageEntity
 import com.securechat.data.local.entity.PendingOperationEntity
@@ -39,9 +41,10 @@ import com.securechat.data.local.entity.UserSettingsEntity
         MediaEntity::class,
         PendingUploadEntity::class,
         PendingOperationEntity::class,
-        UserSettingsEntity::class
+        UserSettingsEntity::class,
+        E2eeSessionEntity::class
     ],
-    version = 6,
+    version = 8,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -56,6 +59,7 @@ abstract class SecureChatDatabase : RoomDatabase() {
     abstract fun pendingUploadDao(): PendingUploadDao
     abstract fun pendingOperationDao(): PendingOperationDao
     abstract fun userSettingsDao(): UserSettingsDao
+    abstract fun e2eeSessionDao(): E2eeSessionDao
 
     companion object {
         @Volatile
@@ -68,7 +72,7 @@ abstract class SecureChatDatabase : RoomDatabase() {
                     SecureChatDatabase::class.java,
                     "securechat.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
                     .build()
                 INSTANCE = instance
                 instance
@@ -119,6 +123,33 @@ abstract class SecureChatDatabase : RoomDatabase() {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE conversation_participants ADD COLUMN isOnline INTEGER NOT NULL DEFAULT 0")
                 database.execSQL("ALTER TABLE conversation_participants ADD COLUMN lastSeen INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        // Version 7 adds E2EE envelope columns to messages so each device can
+        // persist its own per-recipient ciphertext for history decryption.
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE messages ADD COLUMN contentType TEXT")
+                database.execSQL("ALTER TABLE messages ADD COLUMN envelopeType INTEGER")
+                database.execSQL("ALTER TABLE messages ADD COLUMN envelopeCiphertext TEXT")
+            }
+        }
+
+        // Version 8 adds the signal_sessions table, which persists libsignal
+        // session state (ratchet keys, chain keys, counters) per recipient so a
+        // device can decrypt E2EE history after restarting.
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS signal_sessions (
+                        recipient_name TEXT NOT NULL,
+                        device_id INTEGER NOT NULL,
+                        record BLOB NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        PRIMARY KEY (recipient_name, device_id)
+                    )
+                """.trimIndent())
             }
         }
     }

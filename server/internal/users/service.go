@@ -3,15 +3,17 @@ package users
 import (
 	"context"
 
+	"github.com/securechat/server/internal/devices"
 	apperrors "github.com/securechat/server/pkg/errors"
 )
 
 type Service struct {
-	repo *Repository
+	repo        *Repository
+	devicesRepo *devices.Repository
 }
 
-func NewService(repo *Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo *Repository, devicesRepo *devices.Repository) *Service {
+	return &Service{repo: repo, devicesRepo: devicesRepo}
 }
 
 func (s *Service) GetProfile(ctx context.Context, userID int64) (*User, error) {
@@ -71,4 +73,9 @@ func (s *Service) GetSettings(ctx context.Context, userID int64) (*UserSettings,
 func (s *Service) UpdateSettings(ctx context.Context, userID int64, settings *UserSettings) error {
 	settings.UserID = userID
 	return s.repo.UpdateSettings(ctx, settings)
+}
+
+// GetUserDevices returns the devices of a user, for per-device envelope fan-out.
+func (s *Service) GetUserDevices(ctx context.Context, userID int64) ([]*devices.Device, error) {
+	return s.devicesRepo.GetByUserID(ctx, userID)
 }

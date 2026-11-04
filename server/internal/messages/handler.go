@@ -43,10 +43,22 @@ type MessageResponse struct {
 	Media          *MediaAttachment `json:"media,omitempty"`
 	ReplyToID      *int64           `json:"reply_to_id,omitempty"`
 	Status         string           `json:"status"`
+	ContentType    string           `json:"content_type,omitempty"`
 	CreatedAt      int64            `json:"created_at"`
 	UpdatedAt      int64            `json:"updated_at"`
 	DeliveredAt    *int64           `json:"delivered_at,omitempty"`
 	ReadAt         *int64           `json:"read_at,omitempty"`
+	// Envelope is this device's per-recipient ciphertext for E2EE messages.
+	// Nil for legacy plaintext messages and for messages not addressed to
+	// this device. Opaque to the server.
+	Envelope *EnvelopeResponse `json:"envelope,omitempty"`
+}
+
+// EnvelopeResponse is one per-recipient-device envelope in the shape the
+// client consumes. Ciphertext is base64, opaque to the server.
+type EnvelopeResponse struct {
+	EnvelopeType int    `json:"envelope_type"`
+	Ciphertext   string `json:"ciphertext"` // base64
 }
 
 type MessagePageResponse struct {
@@ -57,6 +69,10 @@ type MessagePageResponse struct {
 
 func (h *Handler) GetMessages(c *fiber.Ctx) error {
 	userID, ok := c.Locals("user_id").(int64)
+	if !ok {
+		return c.Status(401).JSON(apperrors.NewErrorResponse(apperrors.ErrUnauthorized))
+	}
+	deviceID, ok := middleware.DeviceID(c)
 	if !ok {
 		return c.Status(401).JSON(apperrors.NewErrorResponse(apperrors.ErrUnauthorized))
 	}
@@ -85,9 +101,21 @@ func (h *Handler) GetMessages(c *fiber.Ctx) error {
 		return c.Status(500).JSON(apperrors.NewErrorResponse(apperrors.ErrInternalServer))
 	}
 
+	// Batch-fetch this device's envelope for each message in the page so E2EE
+	// clients can decrypt history. One envelope per message, keyed by message id.
+	messageIDs := make([]int64, len(page.Messages))
+	for i, msg := range page.Messages {
+		messageIDs[i] = msg.ID
+	}
+	envelopes, err := h.service.GetEnvelopes(c.Context(), messageIDs, deviceID)
+	if err != nil {
+		logger.Log.Error("Failed to get message envelopes", zap.Error(err))
+		return c.Status(500).JSON(apperrors.NewErrorResponse(apperrors.ErrInternalServer))
+	}
+
 	response := make([]MessageResponse, len(page.Messages))
 	for i, msg := range page.Messages {
-		response[i] = toMessageResponse(msg)
+		response[i] = toMessageResponse(msg, envelopes[msg.ID])
 	}
 
 	var nextCursor *string
@@ -132,7 +160,7 @@ func (h *Handler) DeleteMessage(c *fiber.Ctx) error {
 	})
 }
 
-func toMessageResponse(msg *Message) MessageResponse {
+func toMessageResponse(msg *Message, envelope *Envelope) MessageResponse {
 	var text *string
 	if msg.Text.Valid {
 		text = &msg.Text.String
@@ -171,10 +199,24 @@ func toMessageResponse(msg *Message) MessageResponse {
 		Media:         msg.Media,
 		ReplyToID:     replyToID,
 		Status:        msg.Status,
+		ContentType:   msg.ContentType,
 		CreatedAt:     msg.CreatedAt.UnixMilli(),
 		UpdatedAt:     msg.UpdatedAt.UnixMilli(),
 		DeliveredAt:   deliveredAt,
 		ReadAt:        readAt,
+		Envelope:      envelopeResponse(envelope),
+	}
+}
+
+// envelopeResponse converts a repo Envelope to the client-facing response, or
+// nil when this device is not a recipient of the message.
+func envelopeResponse(e *Envelope) *EnvelopeResponse {
+	if e == nil {
+		return nil
+	}
+	return &EnvelopeResponse{
+		EnvelopeType: e.EnvelopeType,
+		Ciphertext:   string(e.Ciphertext),
 	}
 }
 

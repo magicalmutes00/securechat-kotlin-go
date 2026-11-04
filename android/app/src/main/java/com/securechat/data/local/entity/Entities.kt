@@ -134,7 +134,14 @@ data class MessageEntity(
     val readAt: Long? = null,
     val deletedAt: Long? = null,
     val tempId: String? = null,
-    val isOptimistic: Boolean = true
+    val isOptimistic: Boolean = true,
+    // 'legacy_plaintext' or 'e2ee'; tells the client whether to decrypt.
+    val contentType: String? = null,
+    // This device's per-recipient ciphertext envelope for E2EE messages. Base64
+    // wire form. Null for legacy plaintext messages and for messages not
+    // addressed to this device.
+    val envelopeType: Int? = null,
+    val envelopeCiphertext: String? = null
 )
 
 @Entity(

@@ -1,9 +1,14 @@
 package com.securechat.core.security
 
 import android.content.SharedPreferences
+import org.signal.libsignal.protocol.IdentityKey
 import org.signal.libsignal.protocol.IdentityKeyPair
 import org.signal.libsignal.protocol.ecc.ECKeyPair
 import org.signal.libsignal.protocol.ecc.ECPrivateKey
+import org.signal.libsignal.protocol.ecc.ECPublicKey
+import org.signal.libsignal.protocol.kem.KEMKeyPair
+import org.signal.libsignal.protocol.kem.KEMKeyType
+import org.signal.libsignal.protocol.state.KyberPreKeyRecord
 import org.signal.libsignal.protocol.state.PreKeyRecord
 import org.signal.libsignal.protocol.state.SignedPreKeyRecord
 import java.util.Base64
@@ -38,12 +43,103 @@ class E2eeKeyManager @Inject constructor(
         // key, which is what libsignal's PreKeyBundle verification checks — not
         // the 32-byte raw form the server stores.
         val signedPreKeySignature: ByteArray,
-        val oneTimePreKeys: Map<Int, ByteArray>
+        val oneTimePreKeys: Map<Int, ByteArray>,
+        val kyberPreKeyId: Int,
+        val kyberPreKey: ByteArray,
+        val kyberPreKeySignature: ByteArray
     )
 
     /** True once this device has generated and published its identity. */
     fun isRegistered(): Boolean =
         encryptedPrefs.contains(KEY_IDENTITY_PRIVATE)
+
+    /** This device's identity key pair, used by E2eeProtocolStore to build sessions. */
+    val identityKeyPair: IdentityKeyPair
+        get() = loadIdentityKeyPair()
+
+    /** This device's registration id. */
+    val registrationId: Int
+        get() = encryptedPrefs.getInt(KEY_REGISTRATION_ID, 0)
+
+    /** A stable local identifier string (this device's own id) for the store. */
+    val localIdentifier: String
+        get() = encryptedPrefs.getString(KEY_LOCAL_IDENTIFIER, "device") ?: "device"
+
+    /** Rebuilds the stored identity key pair from EncryptedSharedPreferences. */
+    private fun loadIdentityKeyPair(): IdentityKeyPair {
+        val privateBytes = decode(encryptedPrefs.getString(KEY_IDENTITY_PRIVATE, null)
+            ?: error("identity key not found"))
+        val publicBytes = decode(encryptedPrefs.getString(KEY_IDENTITY_PUBLIC, null)
+            ?: error("identity key not found"))
+        return IdentityKeyPair(
+            IdentityKey(publicBytes),
+            ECPrivateKey(privateBytes)
+        )
+    }
+
+    /** Loads the stored one-time prekey record for [id], if present. */
+    fun preKeyRecord(id: Int): PreKeyRecord? {
+        val publicKey = oneTimePublic[id] ?: return null
+        val privateKey = oneTimePrivate[id] ?: return null
+        return PreKeyRecord(id, ECKeyPair(ECPublicKey(publicKey), ECPrivateKey(privateKey)))
+    }
+
+    fun containsPreKey(id: Int): Boolean = oneTimePublic.containsKey(id)
+    fun preKeyIds(): List<Int> = oneTimePublic.keys.toList()
+
+    val signedPreKeyRecord: SignedPreKeyRecord?
+        get() {
+            val pubStr = encryptedPrefs.getString(KEY_SIGNED_PREKEY_PUBLIC, null) ?: return null
+            val privStr = encryptedPrefs.getString(KEY_SIGNED_PREKEY_PRIVATE, null) ?: return null
+            val sigStr = encryptedPrefs.getString(KEY_SIGNED_PREKEY_SIGNATURE, null) ?: return null
+            if (pubStr.isBlank() || privStr.isBlank() || sigStr.isBlank()) return null
+            val pub = decode(pubStr)
+            val priv = decode(privStr)
+            val sig = decode(sigStr)
+            if (pub.isEmpty() || priv.isEmpty() || sig.isEmpty()) return null
+            val pair = ECKeyPair(
+                ECPublicKey(pub),
+                ECPrivateKey(priv)
+            )
+            return SignedPreKeyRecord(
+                encryptedPrefs.getInt(KEY_SIGNED_PREKEY_ID, 0),
+                System.currentTimeMillis(),
+                pair,
+                sig
+            )
+        }
+
+    fun containsSignedPreKey(id: Int): Boolean = encryptedPrefs.getInt(KEY_SIGNED_PREKEY_ID, 0) == id
+    val signedPreKeyIds: List<Int>
+        get() = listOfNotNull(encryptedPrefs.getInt(KEY_SIGNED_PREKEY_ID, 0).takeIf { it > 0 })
+
+    /** Loads the stored Kyber prekey record for [id], if present. */
+    fun kyberPreKeyRecord(id: Int): KyberPreKeyRecord? {
+        val serialized = encryptedPrefs.getString(KEY_KYBER_PREKEY_RECORD, null) ?: return null
+        return try {
+            KyberPreKeyRecord(decode(serialized))
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun containsKyberPreKey(id: Int): Boolean = encryptedPrefs.contains(KEY_KYBER_PREKEY_RECORD)
+    val kyberPreKeyIds: List<Int> by lazy {
+        if (containsKyberPreKey(FIRST_KYBER_PRE_KEY_ID)) listOf(FIRST_KYBER_PRE_KEY_ID) else emptyList()
+    }
+
+    /** Sets the local identifier for this device (used as SignalProtocolAddress name context). */
+    fun setLocalIdentifier(identifier: String) {
+        encryptedPrefs.edit().putString(KEY_LOCAL_IDENTIFIER, identifier).apply()
+    }
+
+    private val oneTimePublic: Map<Int, ByteArray> by lazy {
+        decodeMap(encryptedPrefs.getString(KEY_ONE_TIME_PUBLIC, null))
+    }
+
+    private val oneTimePrivate: Map<Int, ByteArray> by lazy {
+        decodeMap(encryptedPrefs.getString(KEY_ONE_TIME_PRIVATE, null))
+    }
 
     /**
      * Generates a fresh identity, or returns the existing one untouched.
@@ -73,7 +169,14 @@ class E2eeKeyManager @Inject constructor(
             id to PreKeyRecord(id, ECKeyPair.generate())
         }
 
-        persist(identity, registrationId, signedPreKeyRecord, oneTime)
+        // Kyber prekey: required by PQXDH, so every bundle carries one.
+        val kyberPreKeyId = FIRST_KYBER_PRE_KEY_ID
+        val kyberKeyPair = KEMKeyPair.generate(KEMKeyType.KYBER_1024)
+        val kyberSignature = identity.privateKey.calculateSignature(
+            kyberKeyPair.publicKey.serialize()
+        )
+
+        persist(identity, registrationId, signedPreKeyRecord, oneTime, kyberKeyPair, kyberSignature)
 
         return PublishBundle(
             identityKey = identity.publicKey.publicKey.publicKeyBytes,
@@ -81,7 +184,10 @@ class E2eeKeyManager @Inject constructor(
             signedPreKeyId = signedPreKeyId,
             signedPreKeyPublic = signedPreKeyPair.publicKey.publicKeyBytes,
             signedPreKeySignature = signature,
-            oneTimePreKeys = oneTime.mapValues { it.value.keyPair.publicKey.publicKeyBytes }
+            oneTimePreKeys = oneTime.mapValues { it.value.keyPair.publicKey.publicKeyBytes },
+            kyberPreKeyId = kyberPreKeyId,
+            kyberPreKey = kyberKeyPair.publicKey.serialize(),
+            kyberPreKeySignature = kyberSignature
         )
     }
 
@@ -100,13 +206,18 @@ class E2eeKeyManager @Inject constructor(
 
         val oneTime = decodeMap(encryptedPrefs.getString(KEY_ONE_TIME_PUBLIC, null))
 
+        val kyberRecord = decode(encryptedPrefs.getString(KEY_KYBER_PREKEY_RECORD, null))
+
         return PublishBundle(
             identityKey = decode(encryptedPrefs.getString(KEY_IDENTITY_PUBLIC, null)),
             registrationId = encryptedPrefs.getInt(KEY_REGISTRATION_ID, 0),
             signedPreKeyId = signedPreKeyId,
             signedPreKeyPublic = decode(encryptedPrefs.getString(KEY_SIGNED_PREKEY_PUBLIC, null)),
             signedPreKeySignature = signature,
-            oneTimePreKeys = oneTime
+            oneTimePreKeys = oneTime,
+            kyberPreKeyId = encryptedPrefs.getInt(KEY_KYBER_PREKEY_ID, 0),
+            kyberPreKey = kyberRecord,
+            kyberPreKeySignature = decode(encryptedPrefs.getString(KEY_KYBER_PREKEY_SIGNATURE, null))
         )
     }
 
@@ -114,7 +225,9 @@ class E2eeKeyManager @Inject constructor(
         identity: IdentityKeyPair,
         registrationId: Int,
         signedPreKey: SignedPreKeyRecord,
-        oneTime: Map<Int, PreKeyRecord>
+        oneTime: Map<Int, PreKeyRecord>,
+        kyberKeyPair: KEMKeyPair,
+        kyberSignature: ByteArray
     ) {
         val oneTimePublic = oneTime.mapValues { it.value.keyPair.publicKey.publicKeyBytes }
         val oneTimePrivate = oneTime.mapValues { it.value.keyPair.privateKey.serialize() }
@@ -129,6 +242,9 @@ class E2eeKeyManager @Inject constructor(
             .putString(KEY_SIGNED_PREKEY_SIGNATURE, encode(signedPreKey.signature))
             .putString(KEY_ONE_TIME_PUBLIC, encodeMap(oneTimePublic))
             .putString(KEY_ONE_TIME_PRIVATE, encodeMap(oneTimePrivate))
+            .putInt(KEY_KYBER_PREKEY_ID, FIRST_KYBER_PRE_KEY_ID)
+            .putString(KEY_KYBER_PREKEY_RECORD, encode(kyberRecordBytes(kyberKeyPair, kyberSignature)))
+            .putString(KEY_KYBER_PREKEY_SIGNATURE, encode(kyberSignature))
             .apply()
     }
 
@@ -153,6 +269,24 @@ class E2eeKeyManager @Inject constructor(
         return Base64.getDecoder().decode(value)
     }
 
+    /**
+     * Builds the serialized KyberPreKeyRecord bytes from the generated Kyber key pair
+     * and signature, so it can be persisted whole (KEMKeyPair cannot be rebuilt from
+     * raw bytes — it has no byte-based constructor, only generate() and a native
+     * handle constructor).
+     */
+    private fun kyberRecordBytes(
+        kyberKeyPair: KEMKeyPair,
+        kyberSignature: ByteArray
+    ): ByteArray {
+        return KyberPreKeyRecord(
+            FIRST_KYBER_PRE_KEY_ID,
+            System.currentTimeMillis(),
+            kyberKeyPair,
+            kyberSignature
+        ).serialize()
+    }
+
     private fun encodeMap(map: Map<Int, ByteArray>): String =
         map.entries.joinToString(ENTRY_SEPARATOR) { (id, bytes) ->
             "$id${KEY_VALUE_SEPARATOR}${encode(bytes)}"
@@ -175,14 +309,19 @@ class E2eeKeyManager @Inject constructor(
         private const val KEY_SIGNED_PREKEY_PUBLIC = "e2ee_signed_prekey_public"
         private const val KEY_SIGNED_PREKEY_PRIVATE = "e2ee_signed_prekey_private"
         private const val KEY_SIGNED_PREKEY_SIGNATURE = "e2ee_signed_prekey_signature"
+        private const val KEY_LOCAL_IDENTIFIER = "e2ee_local_identifier"
         private const val KEY_ONE_TIME_PUBLIC = "e2ee_one_time_public"
         private const val KEY_ONE_TIME_PRIVATE = "e2ee_one_time_private"
+        private const val KEY_KYBER_PREKEY_ID = "e2ee_kyber_prekey_id"
+        private const val KEY_KYBER_PREKEY_RECORD = "e2ee_kyber_prekey_record"
+        private const val KEY_KYBER_PREKEY_SIGNATURE = "e2ee_kyber_prekey_signature"
 
         private const val ENTRY_SEPARATOR = ";"
         private const val KEY_VALUE_SEPARATOR = ":"
 
         private const val MAX_REGISTRATION_ID = 16380
         private const val FIRST_SIGNED_PRE_KEY_ID = 1
+        private const val FIRST_KYBER_PRE_KEY_ID = 1
         private const val ONE_TIME_PREKEY_COUNT = 100
     }
 }

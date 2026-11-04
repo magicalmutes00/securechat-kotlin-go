@@ -6,6 +6,8 @@ import com.securechat.R
 import com.securechat.core.media.CloudinaryUploadHelper
 import com.securechat.core.network.NetworkModule
 import com.securechat.core.security.E2eeKeyManager
+import com.securechat.core.security.E2eeProtocolStore
+import com.securechat.core.security.E2eeSessionManager
 import com.securechat.core.security.TokenStorage
 import com.securechat.data.local.database.SecureChatDatabase
 import com.securechat.data.local.dao.*
@@ -123,13 +125,28 @@ object DataModule {
         return CloudinaryUploadHelper(context)
     }
 
-    // Repositories
+    // E2EE (Phase E1 + E2)
+    @Provides
+    @Singleton
+    fun provideE2eeProtocolStore(
+        @ApplicationContext context: Context,
+        keyManager: E2eeKeyManager,
+        sessionDao: E2eeSessionDao
+    ): E2eeProtocolStore = E2eeProtocolStore(context, keyManager, sessionDao)
+
+    @Provides
+    @Singleton
+    fun provideE2eeSessionManager(
+        protocolStore: E2eeProtocolStore
+    ): E2eeSessionManager = E2eeSessionManager(protocolStore)
+
     @Provides
     @Singleton
     fun provideE2eeRepository(
         apiService: ApiService,
-        keyManager: E2eeKeyManager
-    ): E2eeRepository = E2eeRepositoryImpl(apiService, keyManager)
+        keyManager: E2eeKeyManager,
+        sessionManager: E2eeSessionManager
+    ): E2eeRepository = E2eeRepositoryImpl(apiService, keyManager, sessionManager)
 
     @Provides
     @Singleton
@@ -157,9 +174,13 @@ object DataModule {
         messageDao: MessageDao,
         mediaDao: MediaDao,
         webSocketManager: WebSocketManager,
-        operationQueue: com.securechat.data.sync.PendingOperationQueue
+        operationQueue: com.securechat.data.sync.PendingOperationQueue,
+        e2eeRepository: E2eeRepository,
+        deviceDao: DeviceDao,
+        conversationParticipantDao: ConversationParticipantDao
     ): MessageRepository = MessageRepositoryImpl(
-        apiService, database, messageDao, mediaDao, webSocketManager, operationQueue
+        apiService, database, messageDao, mediaDao, webSocketManager, operationQueue,
+        e2eeRepository, deviceDao, conversationParticipantDao
     )
 
     @Provides

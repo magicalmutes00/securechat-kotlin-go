@@ -1,8 +1,11 @@
 package com.securechat.data.repository
 
 import com.securechat.core.common.Result
+import com.securechat.core.security.E2eeSessionManager
 import com.securechat.core.utils.UserSession
 import com.securechat.data.local.database.SecureChatDatabase
+import com.securechat.data.local.dao.ConversationParticipantDao
+import com.securechat.data.local.dao.DeviceDao
 import com.securechat.data.local.dao.MessageDao
 import com.securechat.data.local.dao.MediaDao
 import com.securechat.data.local.entity.MediaEntity
@@ -12,6 +15,7 @@ import com.securechat.data.local.entity.toDomain
 import com.securechat.data.remote.api.ApiService
 import com.securechat.data.remote.dto.MessageDto
 import com.securechat.data.remote.dto.MediaDto
+import com.securechat.data.remote.websocket.EnvelopePayload
 import com.securechat.data.remote.websocket.WebSocketManager
 import com.securechat.data.sync.PendingOperationQueue
 import com.securechat.domain.model.Message
@@ -19,6 +23,7 @@ import com.securechat.domain.model.Media
 import com.securechat.domain.model.MediaResourceType
 import com.securechat.domain.model.MessageStatus
 import com.securechat.domain.model.MessageType
+import com.securechat.domain.repository.E2eeRepository
 import com.securechat.domain.repository.MessageRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -26,6 +31,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
+import java.util.Base64
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -37,7 +43,10 @@ class MessageRepositoryImpl @Inject constructor(
     private val messageDao: MessageDao,
     private val mediaDao: MediaDao,
     private val webSocketManager: WebSocketManager,
-    private val operationQueue: PendingOperationQueue
+    private val operationQueue: PendingOperationQueue,
+    private val e2eeRepository: E2eeRepository,
+    private val deviceDao: DeviceDao,
+    private val conversationParticipantDao: ConversationParticipantDao
 ) : MessageRepository {
 
     override suspend fun getMessages(
@@ -49,9 +58,10 @@ class MessageRepositoryImpl @Inject constructor(
             apiService.getMessages(conversationId, cursor, limit)
                 .map { response ->
                     val messages = response.messages.map { dto ->
-                        val message = mapToMessage(dto)
-                        saveMessage(message)
-                        message
+                        val message = decryptMessageIfNeeded(dto)
+                        val mapped = mapToMessage(message)
+                        saveMessage(mapped)
+                        mapped
                     }
                     MessageRepository.MessagePage(
                         messages = messages,
@@ -59,6 +69,24 @@ class MessageRepositoryImpl @Inject constructor(
                         hasMore = response.has_more
                     )
                 }
+        }
+    }
+
+    /** Decrypts an E2EE message's envelope for this device, leaving plaintext as-is. */
+    private suspend fun decryptMessageIfNeeded(dto: MessageDto): MessageDto {
+        return if (dto.content_type == "e2ee" && dto.envelope_ciphertext != null && dto.envelope_type != null) {
+            val sender = dto.sender_name ?: dto.sender_id.toString()
+            val ciphertext = Base64.getDecoder().decode(dto.envelope_ciphertext)
+            e2eeRepository.decryptFrom(
+                senderDeviceId = dto.sender_id,
+                senderName = sender,
+                envelopeType = dto.envelope_type,
+                ciphertext = ciphertext
+            ).map { plaintext ->
+                dto.copy(text = String(plaintext), content_type = "legacy_plaintext")
+            }.getOrElse { dto }
+        } else {
+            dto
         }
     }
 
@@ -76,6 +104,30 @@ class MessageRepositoryImpl @Inject constructor(
                 MessageType.DOCUMENT -> "document"
             }
 
+            // E2EE: encrypt the plaintext once per recipient device and fan out
+            // one opaque envelope per destination over WebSocket. The server is a
+            // blind relay — it never sees plaintext.
+            val plaintext = (message.text ?: "").toByteArray()
+            val recipients = conversationParticipantDao.getByConversationId(message.conversationId).first()
+                .mapNotNull { it.userId.takeIf { it != UserSession.currentUserId } }
+            val envelopes = recipients.flatMap { userId ->
+                deviceDao.getByUserId(userId).first().mapNotNull { device ->
+                    val deviceId = device.serverId ?: device.id
+                    val senderName = UserSession.displayName
+                    e2eeRepository.encryptFor(
+                        recipientDeviceId = deviceId,
+                        recipientName = senderName,
+                        plaintext = plaintext
+                    ).map { encrypted ->
+                        EnvelopePayload(
+                            recipient_device_id = deviceId,
+                            envelope_type = encrypted.envelopeType,
+                            ciphertext = java.util.Base64.getEncoder().withoutPadding().encodeToString(encrypted.ciphertext)
+                        )
+                    }.getOrNull()
+                }
+            }
+
             // The server only accepts sends over WebSocket. The manager queues
             // frames made while offline and flushes them on reconnect; the
             // MESSAGE_ACK event flips this row to SENT via the event processor.
@@ -83,10 +135,11 @@ class MessageRepositoryImpl @Inject constructor(
             val sendResult = webSocketManager.sendMessage(
                 conversationId = message.conversationId,
                 type = messageType,
-                text = message.text,
+                text = if (envelopes.isEmpty()) message.text else null,
                 mediaId = message.media?.id,
                 replyToId = message.replyTo?.id,
-                tempId = tempId
+                tempId = tempId,
+                envelopes = envelopes.takeIf { it.isNotEmpty() }
             )
 
             if (sendResult.isFailure) {
@@ -128,16 +181,40 @@ class MessageRepositoryImpl @Inject constructor(
                 )
             )
 
+            // Re-encrypt for E2EE if this was an encrypted message; legacy
+            // plaintext is re-sent as-is.
+            val plaintext = (entity.text ?: "").toByteArray()
+            val recipients = conversationParticipantDao.getByConversationId(entity.conversationId).first()
+                .mapNotNull { it.userId.takeIf { it != UserSession.currentUserId } }
+            val envelopes = recipients.flatMap { userId ->
+                deviceDao.getByUserId(userId).first().mapNotNull { device ->
+                    val deviceId = device.serverId ?: device.id
+                    val senderName = UserSession.displayName
+                    e2eeRepository.encryptFor(
+                        recipientDeviceId = deviceId,
+                        recipientName = senderName,
+                        plaintext = plaintext
+                    ).map { encrypted ->
+                        EnvelopePayload(
+                            recipient_device_id = deviceId,
+                            envelope_type = encrypted.envelopeType,
+                            ciphertext = java.util.Base64.getEncoder().withoutPadding().encodeToString(encrypted.ciphertext)
+                        )
+                    }.getOrNull()
+                }
+            }
+
             // Actually re-send. Previously this only flipped the status, so the
             // row sat in SENDING forever and the user saw a spinner that never
             // resolved.
             val sendResult = webSocketManager.sendMessage(
                 conversationId = entity.conversationId,
                 type = entity.type,
-                text = entity.text,
+                text = if (envelopes.isEmpty()) entity.text else null,
                 mediaId = entity.mediaId,
                 replyToId = entity.replyToId,
-                tempId = tempId
+                tempId = tempId,
+                envelopes = envelopes.takeIf { it.isNotEmpty() }
             )
 
             if (sendResult.isFailure) {

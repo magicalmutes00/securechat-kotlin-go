@@ -1,0 +1,12 @@
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://localhost:20128",
+    "ANTHROPIC_AUTH_TOKEN": "omniroute",
+    "ANTHROPIC_MODEL": "nvidia/nvidia/nemotron-3.5-super-vl-120b-a12b",
+    "ANTHROPIC_SMALL_FAST_MODEL": "nvidia/nvidia/nemotron-3.5-lightning-30b-a3b",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "nvidia/minimaxai/minimax-m3.1-flash",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "nvidia/nvidia/ising-calibration-1.5-31b",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "nvidia/mistralai/mistral-large-4-1t-a52b",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+  }
+}
