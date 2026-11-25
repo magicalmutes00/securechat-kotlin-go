@@ -15,6 +15,7 @@ type Config struct {
 	OTP        OTPConfig
 	Google     GoogleConfig
 	Firebase   FirebaseConfig
+	Fcm        FcmConfig
 	Cloudinary CloudinaryConfig
 	Ollama     OllamaConfig
 	Logger     LoggerConfig
@@ -71,6 +72,14 @@ type GoogleConfig struct {
 // (it ships inside the Android google-services.json), so a default is safe.
 type FirebaseConfig struct {
 	ProjectID string
+}
+
+// FcmConfig holds the Firebase Cloud Messaging credentials used to send push
+// notifications. The service account JSON is base64-encoded and injected via
+// environment variable so no secret lives in code or config files.
+type FcmConfig struct {
+	ProjectID   string
+	Credentials string // base64-encoded service account JSON
 }
 
 type CloudinaryConfig struct {
@@ -199,6 +208,12 @@ func Load() (*Config, error) {
 		// Default to the project that ships in the Android google-services.json.
 		cfg.Firebase.ProjectID = "chatgo-364a2"
 	}
+
+	cfg.Fcm.ProjectID = viper.GetString("securechat_fcm_project_id")
+	if cfg.Fcm.ProjectID == "" {
+		cfg.Fcm.ProjectID = cfg.Firebase.ProjectID
+	}
+	cfg.Fcm.Credentials = viper.GetString("securechat_fcm_service_account_json")
 
 	cfg.Cloudinary.CloudName = viper.GetString("securechat_cloudinary_cloud_name")
 	cfg.Cloudinary.APIKey = viper.GetString("securechat_cloudinary_api_key")

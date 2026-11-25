@@ -25,6 +25,7 @@ import (
 	"github.com/securechat/server/internal/messages"
 	"github.com/securechat/server/internal/middleware"
 	"github.com/securechat/server/internal/otp"
+	"github.com/securechat/server/internal/push"
 	"github.com/securechat/server/internal/users"
 	"github.com/securechat/server/internal/websocket"
 	errorsPkg "github.com/securechat/server/pkg/errors"
@@ -70,6 +71,18 @@ func main() {
 	tokenManager, err := auth.NewTokenManager(cfg)
 	if err != nil {
 		log.Fatal("Failed to create token manager", zap.Error(err))
+	}
+
+	// Initialize push notification service (FCM). Degrades gracefully when
+	// FCM credentials are absent: Notify* becomes a no-op.
+	pushService, err := push.NewService(push.NewRepository(db), &cfg.Fcm)
+	if err != nil {
+		log.Fatal("Failed to create push service", zap.Error(err))
+	}
+	if pushService.Enabled() {
+		log.Info("Push notifications enabled (FCM)")
+	} else {
+		log.Info("Push notifications disabled (no FCM credentials)")
 	}
 
 	// Initialize OTP provider and service (shared with the cleanup loop)
@@ -194,8 +207,11 @@ func main() {
 	// E2EE prekey directory (public key material only; see docs/e2ee-design.md)
 	keys.RegisterRoutes(api, db, tokenManager)
 
+	// Push notifications (FCM)
+	push.RegisterRoutes(api, db, tokenManager, pushService)
+
 	// WebSocket
-	app.Get("/ws", fiberwebsocket.New(websocket.WebSocketHandler(db, tokenManager)))
+	app.Get("/ws", fiberwebsocket.New(websocket.WebSocketHandler(db, tokenManager, pushService)))
 
 	// Start server
 	go func() {

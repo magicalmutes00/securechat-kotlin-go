@@ -1,6 +1,7 @@
 package com.securechat.di
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.room.Room
 import com.securechat.R
 import com.securechat.core.media.CloudinaryUploadHelper
@@ -230,6 +231,15 @@ object DataModule {
     @Provides
     @Singleton
     fun provideAiRepository(): AiRepository = AiRepositoryImpl()
+
+    // Push notifications
+    @Provides
+    @Singleton
+    fun providePushRepository(
+        apiService: ApiService,
+        sharedPreferences: SharedPreferences,
+        userRepository: UserRepository
+    ): PushRepository = PushRepositoryImpl(apiService, sharedPreferences, userRepository)
 }
 
 // Placeholder for AI repository

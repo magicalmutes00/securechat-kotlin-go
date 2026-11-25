@@ -59,7 +59,7 @@ func TestWebSocketMessagingIntegration(t *testing.T) {
 
 	// --- start the server on an ephemeral port ----------------------------
 	app := fiber.New()
-	app.Get("/ws", fiberwebsocket.New(websocket.WebSocketHandler(db, tokenManager)))
+	app.Get("/ws", fiberwebsocket.New(websocket.WebSocketHandler(db, tokenManager, nil)))
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

@@ -3,12 +3,16 @@ package com.securechat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.securechat.core.security.TokenStorage
+import com.securechat.core.push.FcmMessagingService
 import com.securechat.data.sync.WebSocketEventProcessor
 import com.securechat.data.remote.websocket.WebSocketManager
 import com.securechat.domain.model.ThemeMode
 import com.securechat.domain.model.User
 import com.securechat.domain.repository.AuthRepository
+import com.securechat.domain.repository.PushRepository
 import com.securechat.domain.repository.UserRepository
+import com.securechat.domain.usecase.push.RegisterPushTokenUseCase
+import com.securechat.domain.usecase.push.UnregisterPushTokenUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -26,7 +30,10 @@ class MainViewModel @Inject constructor(
     private val userRepository: UserRepository,
     private val e2eeRepository: com.securechat.domain.repository.E2eeRepository,
     private val webSocketManager: WebSocketManager,
-    private val webSocketEventProcessor: WebSocketEventProcessor
+    private val webSocketEventProcessor: WebSocketEventProcessor,
+    private val pushRepository: PushRepository,
+    private val registerPushToken: RegisterPushTokenUseCase,
+    private val unregisterPushToken: UnregisterPushTokenUseCase
 ) : ViewModel() {
 
     private val _authState = MutableStateFlow<AuthState>(AuthState.Unknown)
@@ -66,6 +73,17 @@ class MainViewModel @Inject constructor(
                         // events to the local cache for as long as we're signed in.
                         webSocketManager.start()
                         webSocketEventProcessor.start(viewModelScope)
+                        // Register the FCM push token so the server can notify
+                        // this device when it is offline. Firebase delivers the
+                        // token via FcmMessagingService.onNewToken, which caches
+                        // it locally; if a token was already cached (e.g. from a
+                        // previous app start), register it now.
+                        viewModelScope.launch {
+                            val token = pushRepository.storedFcmToken
+                            if (token != null) {
+                                registerPushToken(token, "android")
+                            }
+                        }
                     }
                     is AuthState.Unauthenticated -> {
                         webSocketEventProcessor.stop()
@@ -102,6 +120,13 @@ class MainViewModel @Inject constructor(
 
     fun onLogout() {
         viewModelScope.launch {
+            // Unregister the push token before signing out so the server stops
+            // sending pushes to this device.
+            val token = pushRepository.storedFcmToken
+            if (token != null) {
+                unregisterPushToken(token)
+            }
+            pushRepository.clearFcmToken()
             authRepository.logout()
             com.securechat.core.utils.UserSession.clear()
             _authState.value = AuthState.Unauthenticated

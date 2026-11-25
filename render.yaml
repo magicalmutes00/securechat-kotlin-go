@@ -76,3 +76,8 @@ services:
 
       - key: SECURECHAT_GOOGLE_CLIENT_ID
         sync: false
+
+      - key: SECURECHAT_FCM_PROJECT_ID
+        sync: false
+      - key: SECURECHAT_FCM_SERVICE_ACCOUNT_JSON
+        sync: false

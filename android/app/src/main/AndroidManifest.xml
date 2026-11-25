@@ -47,6 +47,15 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- Firebase Messaging service: receives FCM push messages and displays notifications -->
+        <service
+            android:name=".core.push.FcmMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
         <!-- Boot Receiver for restarting sync service -->
         <receiver
             android:name=".core.sync.BootReceiver"

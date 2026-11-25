@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"strconv"
 	"sync"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/securechat/server/internal/devices"
 	"github.com/securechat/server/internal/media"
 	"github.com/securechat/server/internal/messages"
+	"github.com/securechat/server/internal/push"
 	"github.com/securechat/server/pkg/logger"
 	"go.uber.org/zap"
 )
@@ -43,12 +45,13 @@ const (
 )
 
 type Hub struct {
-	clients    map[int64]map[*Client]bool // userID -> clients (multi-device)
-	register   chan *Client
-	unregister chan *Client
-	mu         sync.RWMutex
-	db         *sql.DB
-	tokenMgr   *auth.TokenManager
+	clients     map[int64]map[*Client]bool // userID -> clients (multi-device)
+	register    chan *Client
+	unregister  chan *Client
+	mu          sync.RWMutex
+	db          *sql.DB
+	tokenMgr    *auth.TokenManager
+	pushService *push.Service
 }
 
 type Client struct {
@@ -139,13 +142,14 @@ type ErrorPayload struct {
 	Message string `json:"message"`
 }
 
-func NewHub(db *sql.DB, tokenMgr *auth.TokenManager) *Hub {
+func NewHub(db *sql.DB, tokenMgr *auth.TokenManager, pushService *push.Service) *Hub {
 	return &Hub{
-		clients:    make(map[int64]map[*Client]bool),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
-		db:         db,
-		tokenMgr:   tokenMgr,
+		clients:     make(map[int64]map[*Client]bool),
+		register:    make(chan *Client),
+		unregister:  make(chan *Client),
+		db:          db,
+		tokenMgr:    tokenMgr,
+		pushService: pushService,
 	}
 }
 
@@ -562,6 +566,40 @@ func (c *Client) handleMessageSend(tempID string, payload json.RawMessage) {
 			}),
 		})
 	}
+
+	// Push notifications: for every participant device that is not currently
+	// connected via WebSocket, send an FCM push. Push payloads carry no
+	// message plaintext, so the design stays E2EE-compatible.
+	if c.hub.pushService != nil && c.hub.pushService.Enabled() {
+		var offlineDevices []int64
+		for _, deviceID := range participantDeviceIDs {
+			if deviceID == c.deviceID {
+				continue // sender's own device does not need a push
+			}
+			if !c.hub.DeviceOnline(deviceID) {
+				offlineDevices = append(offlineDevices, deviceID)
+			}
+		}
+		if len(offlineDevices) > 0 {
+			// Fire-and-forget in a goroutine: push delivery must never block
+			// message send. A fresh context bounded by dbTimeout is used.
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+				defer cancel()
+				c.hub.pushService.NotifyDevices(
+					ctx,
+					offlineDevices,
+					"New message",
+					"New message",
+					map[string]string{
+						"conversation_id": strconv.FormatInt(msgSend.ConversationID, 10),
+						"message_id":      strconv.FormatInt(createdMsg.ID, 10),
+						"type":            msgSend.Type,
+					},
+				)
+			}()
+		}
+	}
 }
 
 func (c *Client) handleTyping(payload json.RawMessage, isStart bool) {
@@ -710,6 +748,22 @@ func (c *Client) handleMessageDelete(payload json.RawMessage) {
 			"deleted_by":      c.userID,
 		}),
 	})
+}
+
+// DeviceOnline reports whether any socket of the given device is currently
+// connected to the hub. Used to decide whether a message recipient needs a
+// push notification instead of (or in addition to) a WebSocket frame.
+func (h *Hub) DeviceOnline(deviceID int64) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, clients := range h.clients {
+		for client := range clients {
+			if client.deviceID == deviceID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // isParticipant reports whether the client's user is an active participant of
@@ -943,8 +997,8 @@ func contentType(envelopes []EnvelopePayload) string {
 	return "legacy_plaintext"
 }
 
-func WebSocketHandler(db *sql.DB, tokenMgr *auth.TokenManager) func(*websocket.Conn) {
-	hub := NewHub(db, tokenMgr)
+func WebSocketHandler(db *sql.DB, tokenMgr *auth.TokenManager, pushService *push.Service) func(*websocket.Conn) {
+	hub := NewHub(db, tokenMgr, pushService)
 	go hub.Run()
 
 	return func(c *websocket.Conn) {

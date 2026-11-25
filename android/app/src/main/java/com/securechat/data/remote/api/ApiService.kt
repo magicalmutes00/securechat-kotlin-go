@@ -60,6 +60,10 @@ suspend fun completeUpload(request: CompleteUploadRequest): Result<MediaDto>
     suspend fun getDevices(): Result<List<DeviceDto>>
     suspend fun getUserDevices(userId: Long): Result<List<DeviceDto>>
     suspend fun revokeDevice(id: Long): Result<Unit>
+
+    // Push notifications
+    suspend fun registerPushToken(request: RegisterPushTokenRequest): Result<RegisterPushTokenResponse>
+    suspend fun unregisterPushToken(request: UnregisterPushTokenRequest): Result<Unit>
 }
 
 class ApiServiceImpl(
@@ -369,6 +373,22 @@ class ApiServiceImpl(
     override suspend fun revokeDevice(id: Long): Result<Unit> = executeRequest {
         client.delete("$baseUrl/devices/$id") {
             headers { authHeader().forEach { (k, v) -> append(k, v) } }
+        }
+    }
+
+    override suspend fun registerPushToken(request: RegisterPushTokenRequest): Result<RegisterPushTokenResponse> = executeRequest {
+        client.post("$baseUrl/push/register") {
+            headers { authHeader().forEach { (k, v) -> append(k, v) } }
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }
+    }
+
+    override suspend fun unregisterPushToken(request: UnregisterPushTokenRequest): Result<Unit> = executeRequest {
+        client.delete("$baseUrl/push/token") {
+            headers { authHeader().forEach { (k, v) -> append(k, v) } }
+            contentType(ContentType.Application.Json)
+            setBody(request)
         }
     }
 }
