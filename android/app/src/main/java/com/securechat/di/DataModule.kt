@@ -77,6 +77,10 @@ object DataModule {
     fun provideUserSettingsDao(database: SecureChatDatabase): UserSettingsDao = database.userSettingsDao()
 
     // Network
+
+    @Provides
+    @Singleton
+    fun provideE2eeSessionDao(database: SecureChatDatabase): E2eeSessionDao = database.e2eeSessionDao()
     @Provides
     @Singleton
     fun provideNetworkModule(): NetworkModule = NetworkModule()
