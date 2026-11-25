@@ -2,7 +2,7 @@ package com.securechat.presentation.navigation
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.background
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -16,6 +16,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.securechat.MainViewModel
+import com.securechat.presentation.components.AppleProgress
 import com.securechat.presentation.auth.AuthScreen
 import com.securechat.presentation.auth.OtpVerifyScreen
 import com.securechat.presentation.auth.ProfileSetupScreen
@@ -37,6 +38,7 @@ import com.securechat.presentation.settings.SessionsScreen
 import com.securechat.presentation.settings.SettingsScreen
 import com.securechat.presentation.settings.StorageScreen
 import com.securechat.presentation.settings.ThemeScreen
+import com.securechat.presentation.theme.AppleColor
 
 @Composable
 fun AppNavHost(
@@ -76,9 +78,7 @@ fun AppNavHost(
 
     NavHost(navController, startDestination = "splash") {
         composable("splash") {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
+            LoadingBox()
         }
 
         composable("auth") {
@@ -114,7 +114,6 @@ fun AppNavHost(
 
         composable("home") {
             HomeScreen(
-                onLogout = onLogout,
                 onNewChat = { navController.navigate("contacts") },
                 onNewGroup = { navController.navigate("group/new") },
                 onSettings = { navController.navigate("settings") },
@@ -181,9 +180,7 @@ fun AppNavHost(
                     navController.popBackStack()
                 }
             }
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
+            LoadingBox()
         }
 
         composable("contacts") {
@@ -296,9 +293,7 @@ fun AppNavHost(
                     statusMessage = status,
                     downloadProgress = progress
                 )
-            } ?: Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
+            } ?: LoadingBox()
         }
 
         composable(
@@ -318,9 +313,18 @@ fun AppNavHost(
                     onOpen = { viewer.openExternally() },
                     statusMessage = status
                 )
-            } ?: Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
+            } ?: LoadingBox()
         }
+    }
+}
+
+/** Full-screen spinner on the app background, for routes still resolving data. */
+@Composable
+private fun LoadingBox() {
+    Box(
+        modifier = Modifier.fillMaxSize().background(AppleColor.SystemBackground),
+        contentAlignment = Alignment.Center
+    ) {
+        AppleProgress(size = 24)
     }
 }

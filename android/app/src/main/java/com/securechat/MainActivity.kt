@@ -8,13 +8,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
-import com.securechat.domain.model.ThemeMode
 import com.securechat.presentation.navigation.AppNavHost
-import com.securechat.presentation.theme.Theme
+import com.securechat.presentation.theme.AppleTheme
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
@@ -38,13 +34,7 @@ class MainActivity : ComponentActivity() {
 
         // Auth state is resolved in MainViewModel's init and observed by AppNavHost.
         setContent {
-            val themeMode by viewModel.themeMode.collectAsState()
-            val darkTheme = when (themeMode) {
-                ThemeMode.SYSTEM -> isSystemInDarkTheme()
-                ThemeMode.LIGHT -> false
-                ThemeMode.DARK -> true
-            }
-            Theme(darkTheme = darkTheme) {
+            AppleTheme {
                 AppNavHost(
                     onAuthSuccess = { viewModel.onAuthSuccess() },
                     onLogout = { viewModel.onLogout() }

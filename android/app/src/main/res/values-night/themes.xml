@@ -32,11 +32,11 @@
         <item name="android:colorBackground">@color/md_theme_dark_background</item>
         <item name="android:colorForeground">@color/md_theme_dark_onBackground</item>
 
-        <item name="android:statusBarColor">#FF05060A</item>
-        <item name="android:navigationBarColor">#FF05060A</item>
+        <item name="android:statusBarColor">#FF000000</item>
+        <item name="android:navigationBarColor">#FF000000</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
-        <!-- Same Void window as the light resource: the design has one palette. -->
-        <item name="android:windowBackground">#FF05060A</item>
+        <!-- Same black window as the light resource: the design has one palette. -->
+        <item name="android:windowBackground">#FF000000</item>
     </style>
 </resources>

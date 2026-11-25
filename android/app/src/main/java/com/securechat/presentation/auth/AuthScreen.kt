@@ -3,7 +3,11 @@ package com.securechat.presentation.auth
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,19 +15,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,16 +32,25 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.securechat.R
-import com.securechat.core.utils.DeviceInfo
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.securechat.R
+import com.securechat.core.utils.DeviceInfo
+import com.securechat.presentation.components.AppleActionSheet
+import com.securechat.presentation.components.AppleButton
+import com.securechat.presentation.components.AppleFormField
+import com.securechat.presentation.components.AppleInlineError
+import com.securechat.presentation.components.AppleSheetAction
+import com.securechat.presentation.components.AppleTertiaryButton
+import com.securechat.presentation.theme.AppleColor
+import com.securechat.presentation.theme.AppleSpace
+import com.securechat.presentation.theme.AppleType
 import kotlinx.coroutines.launch
 
 /** Unwraps the Activity from a (possibly wrapped) Compose context. */
@@ -66,209 +75,214 @@ fun AuthScreen(
 
     val googleServerClientId = context.getString(R.string.google_server_client_id)
 
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            text = "SecureChat",
-            fontSize = 32.sp,
-            fontWeight = FontWeight.Bold
-        )
+    var countryPickerOpen by remember { mutableStateOf(false) }
+    val phoneLoading = phoneViewModel.isLoading.value
+    val googleLoading = googleViewModel.isLoading.value
 
-        Spacer(modifier = Modifier.padding(16.dp))
-
-        // Google Sign-In button
-        OutlinedButton(
-            onClick = {
-                googleViewModel.clearError()
-                val googleIdOption = GetGoogleIdOption.Builder()
-                    .setServerClientId(googleServerClientId)
-                    .setFilterByAuthorizedAccounts(false)
-                    .setAutoSelectEnabled(true)
-                    .build()
-                val request = androidx.credentials.GetCredentialRequest.Builder()
-                    .addCredentialOption(googleIdOption)
-                    .build()
-                val credentialManager = androidx.credentials.CredentialManager.create(context)
-                scope.launch {
-                    try {
-                        val result = credentialManager.getCredential(context, request)
-                        val credential = result.credential
-                        if (credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
-                            val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
-                            val deviceName = DeviceInfo.deviceName()
-                            val deviceIdentifier = DeviceInfo.deviceIdentifier(context)
-                            googleViewModel.googleSignIn(
-                                idToken = googleIdTokenCredential.idToken,
-                                deviceName = deviceName,
-                                deviceIdentifier = deviceIdentifier,
-                                onSuccess = { onAuthSuccess() }
-                            )
-                        } else {
-                            googleViewModel.errorMessage.value = "Google sign-in failed. Please try again."
-                        }
-                    } catch (e: Exception) {
-                        android.util.Log.e("GoogleAuth", "Google sign-in failed", e)
-                        googleViewModel.errorMessage.value = when (e) {
-                            is androidx.credentials.exceptions.NoCredentialException ->
-                                "No Google account is available. If this is a debug build, make sure its " +
-                                    "SHA-1 is registered and uninstall any older build of this app."
-                            is androidx.credentials.exceptions.GetCredentialCancellationException ->
-                                "Google sign-in cancelled."
-                            // Play Services errors (e.g. "Developer console is not set up
-                            // correctly") carry the actual fix in their message — surface it.
-                            is androidx.credentials.exceptions.GetCredentialCustomException ->
-                                "Google sign-in failed: ${e.message ?: "credential provider error"}"
-                            else -> "Google sign-in failed: ${e.message ?: "please try again"}"
-                        }
-                    }
+    val continueWithGoogle: () -> Unit = {
+        googleViewModel.clearError()
+        val googleIdOption = GetGoogleIdOption.Builder()
+            .setServerClientId(googleServerClientId)
+            .setFilterByAuthorizedAccounts(false)
+            .setAutoSelectEnabled(true)
+            .build()
+        val request = androidx.credentials.GetCredentialRequest.Builder()
+            .addCredentialOption(googleIdOption)
+            .build()
+        val credentialManager = androidx.credentials.CredentialManager.create(context)
+        scope.launch {
+            try {
+                val result = credentialManager.getCredential(context, request)
+                val credential = result.credential
+                if (credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                    val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
+                    val deviceName = DeviceInfo.deviceName()
+                    val deviceIdentifier = DeviceInfo.deviceIdentifier(context)
+                    googleViewModel.googleSignIn(
+                        idToken = googleIdTokenCredential.idToken,
+                        deviceName = deviceName,
+                        deviceIdentifier = deviceIdentifier,
+                        onSuccess = { onAuthSuccess() }
+                    )
+                } else {
+                    googleViewModel.errorMessage.value = "Google sign-in failed. Please try again."
                 }
-            },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-            enabled = !googleViewModel.isLoading.value
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Continue with Google", fontSize = 16.sp)
+            } catch (e: Exception) {
+                android.util.Log.e("GoogleAuth", "Google sign-in failed", e)
+                googleViewModel.errorMessage.value = when (e) {
+                    is androidx.credentials.exceptions.NoCredentialException ->
+                        "No Google account is available. If this is a debug build, make sure its " +
+                            "SHA-1 is registered and uninstall any older build of this app."
+                    is androidx.credentials.exceptions.GetCredentialCancellationException ->
+                        "Google sign-in cancelled."
+                    // Play Services errors (e.g. "Developer console is not set up
+                    // correctly") carry the actual fix in their message — surface it.
+                    is androidx.credentials.exceptions.GetCredentialCustomException ->
+                        "Google sign-in failed: ${e.message ?: "credential provider error"}"
+                    else -> "Google sign-in failed: ${e.message ?: "please try again"}"
+                }
             }
         }
+    }
 
-        googleViewModel.errorMessage.value?.let { error ->
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = error,
-                fontSize = 14.sp,
-                color = androidx.compose.material3.MaterialTheme.colorScheme.error
-            )
-        }
-
-        if (googleViewModel.isLoading.value) {
-            Spacer(modifier = Modifier.height(16.dp))
-            CircularProgressIndicator()
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
-            HorizontalDivider(modifier = Modifier.weight(1f))
-            Text(
-                text = "  or  ",
-                fontSize = 14.sp,
-                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            HorizontalDivider(modifier = Modifier.weight(1f))
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Text(
-            text = "Continue with phone",
-            fontSize = 16.sp
-        )
-
-        Spacer(modifier = Modifier.padding(24.dp))
-
-        // Country dial code picker (defaults to India +91) beside the number.
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(AppleColor.SystemBackground)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = AppleSpace.Xxl),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            CountryCodeDropdown(
-                selected = phoneViewModel.countryCode.value,
-                onSelected = { phoneViewModel.onCountryCodeChanged(it) },
-                enabled = !phoneViewModel.isLoading.value
+            Spacer(modifier = Modifier.height(72.dp))
+
+            Image(
+                painter = painterResource(R.drawable.ic_launcher_foreground),
+                contentDescription = null,
+                modifier = Modifier.size(84.dp)
+            )
+            Spacer(modifier = Modifier.height(AppleSpace.Lg))
+            Text(text = "SecureChat", style = AppleType.LargeTitle, color = AppleColor.Label)
+            Spacer(modifier = Modifier.height(AppleSpace.Xs))
+            Text(
+                text = "Private, end-to-end encrypted messaging",
+                style = AppleType.Footnote,
+                color = AppleColor.Label3
             )
 
-            TextField(
-                value = phoneViewModel.phoneNumber.value,
-                onValueChange = { phoneViewModel.onPhoneNumberChanged(it.filter { c -> c.isDigit() }) },
-                modifier = Modifier.weight(1f),
-                label = { Text("Phone number") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                enabled = !phoneViewModel.isLoading.value
-            )
-        }
+            Spacer(modifier = Modifier.height(AppleSpace.Huge))
 
-        Spacer(modifier = Modifier.padding(16.dp))
-
-        Button(
-            onClick = {
-                val activity = context.findActivity()
-                if (activity == null) {
-                    phoneViewModel.errorMessage.value = "Unable to start phone sign-in."
-                    return@Button
-                }
-                phoneViewModel.sendOtp(
-                    activity = activity,
-                    deviceName = DeviceInfo.deviceName(),
-                    deviceIdentifier = DeviceInfo.deviceIdentifier(context),
-                    onCodeSent = { onOtpSent(phoneViewModel.buildE164()) },
-                    onAuthenticated = { onAuthSuccess() }
+            /* Phone number: dial code beside the national number. */
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(AppleSpace.Sm),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CountryField(
+                    code = phoneViewModel.countryCode.value,
+                    enabled = !phoneLoading,
+                    onClick = { countryPickerOpen = true }
                 )
-            },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-            enabled = phoneViewModel.phoneNumber.value.isNotBlank() && !phoneViewModel.isLoading.value
-        ) {
-            if (phoneViewModel.isLoading.value) {
-                CircularProgressIndicator()
-            } else {
-                Text("Continue")
+                Box(modifier = Modifier.weight(1f)) {
+                    AppleFormField(
+                        value = phoneViewModel.phoneNumber.value,
+                        onValueChange = {
+                            phoneViewModel.onPhoneNumberChanged(it.filter { c -> c.isDigit() })
+                        },
+                        placeholder = "Phone number",
+                        keyboardType = KeyboardType.Phone
+                    )
+                }
             }
+
+            Spacer(modifier = Modifier.height(AppleSpace.Lg))
+
+            AppleButton(
+                text = if (phoneLoading) "Sending…" else "Continue",
+                enabled = phoneViewModel.phoneNumber.value.isNotBlank() && !phoneLoading,
+                onClick = {
+                    val activity = context.findActivity()
+                    if (activity == null) {
+                        phoneViewModel.errorMessage.value = "Unable to start phone sign-in."
+                        return@AppleButton
+                    }
+                    phoneViewModel.sendOtp(
+                        activity = activity,
+                        deviceName = DeviceInfo.deviceName(),
+                        deviceIdentifier = DeviceInfo.deviceIdentifier(context),
+                        onCodeSent = { onOtpSent(phoneViewModel.buildE164()) },
+                        onAuthenticated = { onAuthSuccess() }
+                    )
+                }
+            )
+
+            phoneViewModel.errorMessage.value?.let { error ->
+                Spacer(modifier = Modifier.height(AppleSpace.Md))
+                AppleInlineError(message = error)
+            }
+
+            Spacer(modifier = Modifier.height(AppleSpace.Xxl))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(0.5.dp)
+                        .background(AppleColor.Separator)
+                )
+                Text(
+                    text = "or",
+                    style = AppleType.Footnote,
+                    color = AppleColor.Label3,
+                    modifier = Modifier.padding(horizontal = AppleSpace.Md)
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(0.5.dp)
+                        .background(AppleColor.Separator)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(AppleSpace.Xxl))
+
+            AppleTertiaryButton(
+                text = if (googleLoading) "Signing in…" else "Continue with Google",
+                onClick = { if (!googleLoading) continueWithGoogle() }
+            )
+
+            googleViewModel.errorMessage.value?.let { error ->
+                Spacer(modifier = Modifier.height(AppleSpace.Md))
+                AppleInlineError(message = error)
+            }
+
+            Spacer(modifier = Modifier.height(AppleSpace.Huge))
         }
 
-        phoneViewModel.errorMessage.value?.let { error ->
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = error,
-                fontSize = 14.sp,
-                color = androidx.compose.material3.MaterialTheme.colorScheme.error
-            )
-        }
+        AppleActionSheet(
+            visible = countryPickerOpen,
+            onDismiss = { countryPickerOpen = false },
+            title = "Country",
+            actions = CountryCodes.all.map { country ->
+                AppleSheetAction(
+                    label = "${country.name}  ${country.code}",
+                    onClick = {
+                        phoneViewModel.onCountryCodeChanged(country.code)
+                        countryPickerOpen = false
+                    }
+                )
+            }
+        )
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** Tappable dial-code field that matches [AppleFormField]'s surface. */
 @Composable
-private fun CountryCodeDropdown(
-    selected: String,
-    onSelected: (String) -> Unit,
-    enabled: Boolean
+private fun CountryField(
+    code: String,
+    enabled: Boolean,
+    onClick: () -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
-    val selectedCountry = CountryCodes.all.firstOrNull { it.code == selected }
-
-    ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { if (enabled) expanded = it },
-        modifier = Modifier.width(132.dp)
+    Row(
+        modifier = Modifier
+            .width(104.dp)
+            .height(45.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(AppleColor.SystemSecondaryBackground)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = AppleSpace.Md),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        OutlinedTextField(
-            value = selectedCountry?.code ?: selected,
-            onValueChange = {},
-            readOnly = true,
-            label = { Text("Code") },
-            singleLine = true,
-            enabled = enabled,
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier.menuAnchor().fillMaxWidth()
+        Text(text = code, style = AppleType.Body, color = AppleColor.Label)
+        Icon(
+            imageVector = Icons.Filled.KeyboardArrowDown,
+            contentDescription = "Country code",
+            tint = AppleColor.Chevron,
+            modifier = Modifier.size(16.dp)
         )
-
-        ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false }
-        ) {
-            CountryCodes.all.forEach { country ->
-                DropdownMenuItem(
-                    text = { Text("${country.name} (${country.code})") },
-                    onClick = {
-                        onSelected(country.code)
-                        expanded = false
-                    }
-                )
-            }
-        }
     }
 }

@@ -1,27 +1,26 @@
 package com.securechat.presentation.auth
 
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.securechat.R
+import com.securechat.presentation.components.AppleButton
+import com.securechat.presentation.components.AppleFormField
+import com.securechat.presentation.components.AppleInlineError
+import com.securechat.presentation.components.AppleTextButton
+import com.securechat.presentation.theme.AppleColor
+import com.securechat.presentation.theme.AppleSpace
+import com.securechat.presentation.theme.AppleType
 
 @Composable
 fun ProfileSetupScreen(
@@ -31,77 +30,62 @@ fun ProfileSetupScreen(
     val viewModel = androidx.hilt.navigation.compose.hiltViewModel<ProfileSetupViewModel>()
 
     Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AppleColor.SystemBackground)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = AppleSpace.Xxl)
     ) {
+        Spacer(modifier = Modifier.height(96.dp))
+
+        Text(text = "Set Up Your Profile", style = AppleType.LargeTitle, color = AppleColor.Label)
+        Spacer(modifier = Modifier.height(AppleSpace.Sm))
         Text(
-            text = "Set up your profile",
-            fontSize = 28.sp,
-            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+            text = "This will be visible to your contacts.",
+            style = AppleType.Body2,
+            color = AppleColor.Label3
         )
 
-        Spacer(modifier = Modifier.padding(8.dp))
+        Spacer(modifier = Modifier.height(AppleSpace.Xxl))
 
-        Text(
-            text = "This will be visible to your contacts",
-            fontSize = 16.sp
-        )
-
-        Spacer(modifier = Modifier.padding(24.dp))
-
-        TextField(
+        AppleFormField(
             value = viewModel.displayName.value,
             onValueChange = { viewModel.onDisplayNameChanged(it) },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-            label = { Text("Display Name") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-            enabled = !viewModel.isLoading.value
+            placeholder = "Display name"
         )
 
-        Spacer(modifier = Modifier.padding(16.dp))
+        Spacer(modifier = Modifier.height(AppleSpace.Md))
 
-        TextField(
+        AppleFormField(
             value = viewModel.username.value,
             onValueChange = { viewModel.onUsernameChanged(it) },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-            label = { Text("Username (optional)") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-            enabled = !viewModel.isLoading.value
+            placeholder = "Username (optional)"
         )
 
         viewModel.errorMessage.value?.let { error ->
-            Spacer(modifier = Modifier.padding(8.dp))
-            Text(
-                text = error,
-                fontSize = 14.sp,
-                color = androidx.compose.material3.MaterialTheme.colorScheme.error
+            Spacer(modifier = Modifier.height(AppleSpace.Md))
+            AppleInlineError(message = error)
+        }
+
+        Spacer(modifier = Modifier.height(AppleSpace.Xxl))
+
+        AppleButton(
+            text = if (viewModel.isLoading.value) "Saving…" else "Complete Setup",
+            enabled = viewModel.displayName.value.isNotBlank() && !viewModel.isLoading.value,
+            onClick = { viewModel.completeProfile(onComplete) }
+        )
+
+        Spacer(modifier = Modifier.height(AppleSpace.Lg))
+
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            AppleTextButton(
+                text = "Skip for now",
+                enabled = !viewModel.isLoading.value,
+                onClick = onSkip
             )
-        }
-
-        Spacer(modifier = Modifier.padding(24.dp))
-
-        Button(
-            onClick = { viewModel.completeProfile(onComplete) },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-            enabled = viewModel.displayName.value.isNotBlank() && !viewModel.isLoading.value
-        ) {
-            if (viewModel.isLoading.value) {
-                CircularProgressIndicator()
-            } else {
-                Text("Complete Setup")
-            }
-        }
-
-        Spacer(modifier = Modifier.padding(16.dp))
-
-        TextButton(
-            onClick = onSkip,
-            enabled = !viewModel.isLoading.value
-        ) {
-            Text("Skip for now")
         }
     }
 }

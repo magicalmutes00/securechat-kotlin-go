@@ -7,6 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,7 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -37,19 +38,14 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,9 +58,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
 import com.securechat.core.utils.UserSession
 import com.securechat.core.utils.formatClockTime
@@ -73,12 +72,18 @@ import com.securechat.domain.model.Media
 import com.securechat.domain.model.Message
 import com.securechat.domain.model.MessageStatus
 import com.securechat.domain.model.MessageType
-import com.securechat.presentation.components.Avatar
-import com.securechat.presentation.components.DatePill
-import com.securechat.presentation.components.SignalIconButton
-import com.securechat.presentation.components.TypingDots
-import com.securechat.presentation.theme.Skin
-import com.securechat.presentation.theme.SkinType
+import com.securechat.presentation.components.AppleActionSheet
+import com.securechat.presentation.components.AppleAlertDialog
+import com.securechat.presentation.components.AppleAvatar
+import com.securechat.presentation.components.AppleDateSeparator
+import com.securechat.presentation.components.AppleFormField
+import com.securechat.presentation.components.AppleInlineError
+import com.securechat.presentation.components.AppleProgressBar
+import com.securechat.presentation.components.AppleSheetAction
+import com.securechat.presentation.components.AppleTypingIndicator
+import com.securechat.presentation.theme.AppleColor
+import com.securechat.presentation.theme.AppleSpace
+import com.securechat.presentation.theme.AppleType
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -97,11 +102,12 @@ fun ChatScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var attachError by remember { mutableStateOf<String?>(null) }
+    var showAttachMenu by remember { mutableStateOf(false) }
     var showGroupMenu by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
     var showLeaveDialog by remember { mutableStateOf(false) }
 
-    androidx.compose.runtime.LaunchedEffect(conversationId) {
+    LaunchedEffect(conversationId) {
         viewModel.initialize(conversationId, UserSession.currentUserId)
     }
 
@@ -121,134 +127,139 @@ fun ChatScreen(
     val messages = viewModel.messages.value
     val isGroup = viewModel.isGroup.value
     val title = viewModel.conversationName.value ?: otherUserName
+    // reverseLayout draws the last item at the top, so the list is reversed too.
+    val display = remember(messages) { messages.reversed() }
 
-    Column(modifier = Modifier.fillMaxSize().background(Skin.Void)) {
-        ConversationHeader(
-            title = title,
-            avatarUrl = otherUserAvatar,
-            online = viewModel.presenceText.value.startsWith("Online"),
-            statusText = if (viewModel.isAnyoneTyping) "typing…" else viewModel.presenceText.value,
-            typing = viewModel.isAnyoneTyping,
-            showMenu = isGroup,
-            onBack = onBack,
-            onMenu = { showGroupMenu = true }
-        )
+    Box(modifier = Modifier.fillMaxSize().background(AppleColor.SystemBackground)) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            ConversationHeader(
+                title = title,
+                avatarUrl = otherUserAvatar,
+                online = viewModel.presenceText.value.startsWith("Online"),
+                statusText = if (viewModel.isAnyoneTyping) "typing…" else viewModel.presenceText.value,
+                typing = viewModel.isAnyoneTyping,
+                showMenu = isGroup,
+                onBack = onBack,
+                onMenu = { showGroupMenu = true }
+            )
 
-        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Skin.Line))
+            Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(AppleColor.Separator))
 
-        LazyColumn(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            reverseLayout = true,
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp
-            ),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            // reverseLayout draws the last item at the top, so the date pill is
-            // added last in order to appear above the history.
-            items(messages.reversed(), key = { it.id }) { message ->
-                MessageRow(
-                    message = message,
-                    isOwn = message.senderId == viewModel.currentUserId,
-                    showAuthor = isGroup && message.senderId != viewModel.currentUserId,
-                    onRetry = { viewModel.retryMessage(message.id) },
-                    onMediaClick = { media ->
-                        onOpenMedia(media.id, message.type == MessageType.DOCUMENT)
-                    }
-                )
-            }
-
-            if (viewModel.isAnyoneTyping) {
-                item(key = "typing") {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .clip(Skin.BubbleIn)
-                                .background(Skin.Primary)
-                                .padding(horizontal = 16.dp, vertical = 12.dp)
-                        ) {
-                            TypingDots()
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                reverseLayout = true,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    start = AppleSpace.Md,
+                    end = AppleSpace.Md,
+                    top = AppleSpace.Sm,
+                    bottom = AppleSpace.Sm
+                ),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                itemsIndexed(display, key = { _, message -> message.id }) { index, message ->
+                    val newer = display.getOrNull(index - 1)
+                    MessageRow(
+                        message = message,
+                        isOwn = message.senderId == viewModel.currentUserId,
+                        showAuthor = isGroup && message.senderId != viewModel.currentUserId,
+                        tail = newer?.senderId != message.senderId,
+                        onRetry = { viewModel.retryMessage(message.id) },
+                        onMediaClick = { media ->
+                            onOpenMedia(media.id, message.type == MessageType.DOCUMENT)
                         }
-                        Spacer(Modifier.width(10.dp))
-                        Text(text = "typing…", style = SkinType.Typing, color = Skin.InkFaint)
+                    )
+                }
+
+                if (viewModel.isAnyoneTyping) {
+                    item(key = "typing") {
+                        Row(modifier = Modifier.padding(vertical = 2.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .background(AppleColor.BubbleIncoming)
+                                    .padding(horizontal = 14.dp, vertical = 14.dp)
+                            ) {
+                                AppleTypingIndicator()
+                            }
+                        }
+                    }
+                }
+
+                if (messages.isNotEmpty()) {
+                    item(key = "date") {
+                        AppleDateSeparator("Today")
                     }
                 }
             }
 
-            if (messages.isNotEmpty()) {
-                item(key = "date") {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        DatePill("Today")
-                    }
-                }
-            }
-        }
-
-        viewModel.attachmentSend.value?.let { state ->
-            AttachmentBanner(
-                fileName = state.fileName,
-                progress = state.progress,
-                failed = state.failed,
-                error = state.error,
-                onCancel = { viewModel.cancelAttachment() },
-                onRetry = { viewModel.retryAttachment() }
-            )
-        }
-
-        attachError?.let { error ->
-            Text(
-                text = error,
-                style = SkinType.Subline,
-                color = Skin.Error,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
-            )
-        }
-
-        Composer(
-            text = messageText,
-            placeholder = "Message ${title.substringBefore(' ')}…",
-            onTextChange = {
-                messageText = it
-                if (it.isNotBlank()) viewModel.onUserTyping()
-            },
-            onSend = {
-                viewModel.onUserStoppedTyping()
-                viewModel.sendTextMessage(it)
-                messageText = ""
-            },
-            onAttachPhoto = {
-                attachError = null
-                pickPhoto.launch(
-                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+            viewModel.attachmentSend.value?.let { state ->
+                AttachmentBanner(
+                    fileName = state.fileName,
+                    progress = state.progress,
+                    failed = state.failed,
+                    error = state.error,
+                    onCancel = { viewModel.cancelAttachment() },
+                    onRetry = { viewModel.retryAttachment() }
                 )
-            },
-            onAttachDocument = {
-                attachError = null
-                pickDocument.launch(arrayOf("*/*"))
             }
+
+            attachError?.let { error ->
+                AppleInlineError(
+                    message = error,
+                    modifier = Modifier.padding(horizontal = AppleSpace.Md, vertical = AppleSpace.Xxs)
+                )
+            }
+
+            Composer(
+                text = messageText,
+                placeholder = "Message ${title.substringBefore(' ')}…",
+                onTextChange = {
+                    messageText = it
+                    if (it.isNotBlank()) viewModel.onUserTyping()
+                },
+                onSend = {
+                    viewModel.onUserStoppedTyping()
+                    viewModel.sendTextMessage(it)
+                    messageText = ""
+                },
+                onAttachClick = { showAttachMenu = true }
+            )
+        }
+
+        AppleActionSheet(
+            visible = showAttachMenu,
+            onDismiss = { showAttachMenu = false },
+            actions = listOf(
+                AppleSheetAction(
+                    label = "Photo or Video",
+                    onClick = {
+                        attachError = null
+                        pickPhoto.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                        )
+                    }
+                ),
+                AppleSheetAction(
+                    label = "Document",
+                    onClick = {
+                        attachError = null
+                        pickDocument.launch(arrayOf("*/*"))
+                    }
+                )
+            )
         )
     }
 
-    if (showGroupMenu) {
-        GroupMenu(
-            onDismiss = { showGroupMenu = false },
-            onAddMembers = {
-                showGroupMenu = false
-                onAddMembers()
-            },
-            onRename = {
-                showGroupMenu = false
-                showRenameDialog = true
-            },
-            onLeave = {
-                showGroupMenu = false
-                showLeaveDialog = true
-            }
+    AppleActionSheet(
+        visible = showGroupMenu,
+        onDismiss = { showGroupMenu = false },
+        title = "Group Options",
+        actions = listOf(
+            AppleSheetAction("Add Members", onClick = onAddMembers),
+            AppleSheetAction("Rename Group", onClick = { showRenameDialog = true }),
+            AppleSheetAction("Leave Group", destructive = true, onClick = { showLeaveDialog = true })
         )
-    }
+    )
 
     if (showRenameDialog) {
         RenameDialog(
@@ -262,32 +273,22 @@ fun ChatScreen(
     }
 
     if (showLeaveDialog) {
-        AlertDialog(
-            onDismissRequest = { showLeaveDialog = false },
-            containerColor = Skin.SurfaceCard,
-            titleContentColor = Skin.Ink,
-            textContentColor = Skin.InkDim,
-            title = { Text("Leave group", style = SkinType.Title) },
-            text = { Text("You will no longer receive messages from this group.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    showLeaveDialog = false
-                    viewModel.leaveGroup(onConversationLeft)
-                }) { Text("Leave", color = Skin.Error) }
+        AppleAlertDialog(
+            title = "Leave Group",
+            message = "You will no longer receive messages from this group.",
+            confirmLabel = "Leave",
+            dismissLabel = "Cancel",
+            destructive = true,
+            onConfirm = {
+                showLeaveDialog = false
+                viewModel.leaveGroup(onConversationLeft)
             },
-            dismissButton = {
-                TextButton(onClick = { showLeaveDialog = false }) {
-                    Text("Cancel", color = Skin.InkDim)
-                }
-            }
+            onDismiss = { showLeaveDialog = false }
         )
     }
 }
 
-/**
- * Header: back chevron, gradient avatar, name and a status line that turns lime
- * while the other side is online or typing — the design's "online · encrypted".
- */
+/** iOS Messages header: back chevron, avatar + name, and group options. */
 @Composable
 private fun ConversationHeader(
     title: String,
@@ -302,62 +303,74 @@ private fun ConversationHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 8.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+            .padding(horizontal = AppleSpace.Xxs, vertical = AppleSpace.Xxs),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
-            modifier = Modifier.size(40.dp).clip(CircleShape).clickable { onBack() },
+            modifier = Modifier.size(44.dp).clip(CircleShape).clickable(onClick = onBack),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                 contentDescription = "Back",
-                tint = Skin.Ink,
-                modifier = Modifier.size(20.dp)
+                tint = AppleColor.SystemBlue,
+                modifier = Modifier.size(24.dp)
             )
         }
 
-        Avatar(url = avatarUrl, name = title, size = 38, initialsSize = 10)
-        Spacer(Modifier.width(10.dp))
-
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = SkinType.HeaderName,
-                color = Skin.Ink,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            AppleAvatar(url = avatarUrl, name = title, size = 30)
+            Spacer(Modifier.width(AppleSpace.Sm))
+            Column {
                 Text(
-                    text = statusText.ifBlank { "offline" },
-                    style = SkinType.HeaderStatus,
-                    color = if (online || typing) Skin.Signal else Skin.InkDim
+                    text = title,
+                    style = AppleType.ListItemTitle,
+                    color = AppleColor.Label,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
-                Spacer(Modifier.width(6.dp))
-                Icon(
-                    imageVector = Icons.Default.Lock,
-                    contentDescription = null,
-                    tint = Skin.InkDim,
-                    modifier = Modifier.size(9.dp)
-                )
-                Spacer(Modifier.width(3.dp))
-                Text(text = "encrypted", style = SkinType.HeaderMeta, color = Skin.InkDim)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = statusText.ifBlank { "Offline" },
+                        style = AppleType.Caption1,
+                        color = if (online || typing) AppleColor.SystemGreen else AppleColor.Label3,
+                        maxLines = 1
+                    )
+                    Spacer(Modifier.width(AppleSpace.Xxs))
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = null,
+                        tint = AppleColor.Label4,
+                        modifier = Modifier.size(9.dp)
+                    )
+                    Spacer(Modifier.width(2.dp))
+                    Text(
+                        text = "Encrypted",
+                        style = AppleType.Caption1,
+                        color = AppleColor.Label4
+                    )
+                }
             }
         }
 
         if (showMenu) {
             Box(
-                modifier = Modifier.size(40.dp).clip(CircleShape).clickable { onMenu() },
+                modifier = Modifier.size(44.dp).clip(CircleShape).clickable(onClick = onMenu),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Default.MoreVert,
                     contentDescription = "Group options",
-                    tint = Skin.InkDim,
-                    modifier = Modifier.size(18.dp)
+                    tint = AppleColor.SystemBlue,
+                    modifier = Modifier.size(22.dp)
                 )
             }
+        } else {
+            Spacer(Modifier.width(44.dp))
         }
     }
 }
@@ -368,16 +381,18 @@ private fun MessageRow(
     message: Message,
     isOwn: Boolean,
     showAuthor: Boolean,
+    tail: Boolean,
     onRetry: () -> Unit,
     onMediaClick: (Media) -> Unit
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isOwn) Arrangement.End else Arrangement.Start
+        modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+        horizontalArrangement = if (isOwn) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.Bottom
     ) {
         if (!isOwn && showAuthor) {
-            Avatar(url = null, name = message.senderName ?: "?", size = 28, initialsSize = 9)
-            Spacer(Modifier.width(8.dp))
+            AppleAvatar(url = null, name = message.senderName ?: "?", size = 26)
+            Spacer(Modifier.width(AppleSpace.Sm))
         }
 
         Column(
@@ -387,79 +402,81 @@ private fun MessageRow(
             if (showAuthor && !message.senderName.isNullOrBlank()) {
                 Text(
                     text = message.senderName.orEmpty(),
-                    style = SkinType.Meta,
-                    color = Skin.InkDim,
-                    modifier = Modifier.padding(start = 6.dp, bottom = 3.dp)
+                    style = AppleType.Footnote,
+                    color = AppleColor.Label3,
+                    modifier = Modifier.padding(start = 12.dp, bottom = 2.dp)
                 )
             }
 
             when (message.type) {
                 MessageType.DOCUMENT -> message.media?.let {
-                    FileBubble(it, message, isOwn, onMediaClick)
-                } ?: TextBubble(message, isOwn, onRetry)
+                    FileBubble(it, message, isOwn, tail, onMediaClick)
+                } ?: TextBubble(message, isOwn, tail, onRetry)
 
-                MessageType.AUDIO -> VoiceBubble(message, isOwn, onMediaClick)
+                MessageType.AUDIO -> VoiceBubble(message, isOwn, tail, onMediaClick)
 
                 MessageType.IMAGE, MessageType.VIDEO -> message.media?.let {
-                    MediaBubble(it, message, isOwn, onMediaClick)
-                } ?: TextBubble(message, isOwn, onRetry)
+                    MediaBubble(it, message, isOwn, tail, onMediaClick)
+                } ?: TextBubble(message, isOwn, tail, onRetry)
 
-                MessageType.TEXT -> TextBubble(message, isOwn, onRetry)
+                MessageType.TEXT -> TextBubble(message, isOwn, tail, onRetry)
             }
         }
     }
 }
 
-/** Plain text bubble: blue incoming, lime outgoing, tail corner squared. */
+/** The last bubble in a run squares the corner on its own side, iMessage-style. */
+private fun bubbleShape(isOwn: Boolean, tail: Boolean): RoundedCornerShape =
+    if (!tail) {
+        RoundedCornerShape(18.dp)
+    } else if (isOwn) {
+        RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomEnd = 4.dp, bottomStart = 18.dp)
+    } else {
+        RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomEnd = 18.dp, bottomStart = 4.dp)
+    }
+
+/** Plain text bubble: blue outgoing, grey incoming, tail corner squared. */
 @Composable
-private fun TextBubble(message: Message, isOwn: Boolean, onRetry: () -> Unit) {
-    val shape = if (isOwn) Skin.BubbleOut else Skin.BubbleIn
-    val background = if (isOwn) Skin.Signal else Skin.Primary
-    val textColor = if (isOwn) Skin.OnSignal else Skin.OnPrimary
-    val metaColor = if (isOwn) Skin.OnSignal.copy(alpha = 0.75f) else Skin.OnPrimarySoft
+private fun TextBubble(message: Message, isOwn: Boolean, tail: Boolean, onRetry: () -> Unit) {
+    val textColor = if (isOwn) Color.White else AppleColor.Label
+    val metaColor = if (isOwn) Color.White.copy(alpha = 0.75f) else AppleColor.Label3
 
     Column(
         modifier = Modifier
-            .clip(shape)
-            .background(background)
-            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .clip(bubbleShape(isOwn, tail))
+            .background(if (isOwn) AppleColor.BubbleOutgoing else AppleColor.BubbleIncoming)
+            .padding(horizontal = 14.dp, vertical = 9.dp)
     ) {
         message.text?.let {
-            Text(
-                text = it,
-                style = if (isOwn) SkinType.BubbleOut else SkinType.BubbleIn,
-                color = textColor
-            )
+            Text(text = it, style = AppleType.Bubble, color = textColor)
         }
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(3.dp))
         Row(
-            // End-aligned, not full-width: fillMaxWidth made the meta row claim
-            // the whole 300dp cap, so a one-word message rendered as a wide slab
-            // instead of hugging its text the way the design does.
+            // End-aligned, not full-width, so a short message hugs its text
+            // instead of rendering as a wide slab.
             modifier = Modifier.align(Alignment.End),
             horizontalArrangement = Arrangement.End,
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (isOwn) {
                 StatusGlyph(message.status, metaColor, onRetry)
-                Spacer(Modifier.width(4.dp))
+                Spacer(Modifier.width(AppleSpace.Xxs))
             } else {
                 // Receipt labels differ: "Delivered" is the recipient's device
-                // accepting it, "Read" is them opening the chat. Collapsing both
-                // into "Delivered" told the sender less than the status carried.
+                // accepting it, "Read" is them opening the chat.
                 val receipt = when (message.status) {
                     MessageStatus.DELIVERED -> "Delivered"
                     MessageStatus.READ -> "Read"
                     else -> null
                 }
                 receipt?.let {
-                    Text(it, style = SkinType.BubbleMetaIn, color = metaColor)
-                    Spacer(Modifier.width(6.dp))
+                    Text(it, style = AppleType.BubbleMeta, color = metaColor)
+                    Spacer(Modifier.width(AppleSpace.Xs))
                 }
             }
             Text(
                 text = message.createdAt.formatClockTime(),
-                style = if (isOwn) SkinType.BubbleMetaOut else SkinType.BubbleMetaIn,
+                style = AppleType.BubbleMeta,
                 color = metaColor
             )
         }
@@ -472,30 +489,32 @@ private fun FileBubble(
     media: Media,
     message: Message,
     isOwn: Boolean,
+    tail: Boolean,
     onMediaClick: (Media) -> Unit
 ) {
-    val shape = if (isOwn) Skin.BubbleOut else Skin.BubbleIn
-    val background = if (isOwn) Skin.Signal else Skin.Primary
-    val textColor = if (isOwn) Skin.OnSignal else Skin.OnPrimary
-    val metaColor = if (isOwn) Skin.OnSignal.copy(alpha = 0.75f) else Skin.OnPrimarySoft
+    val textColor = if (isOwn) Color.White else AppleColor.Label
+    val metaColor = if (isOwn) Color.White.copy(alpha = 0.75f) else AppleColor.Label3
 
     Column(
         modifier = Modifier
             .widthIn(min = 240.dp)
-            .clip(shape)
-            .background(background)
+            .clip(bubbleShape(isOwn, tail))
+            .background(if (isOwn) AppleColor.BubbleOutgoing else AppleColor.BubbleIncoming)
             .clickable { onMediaClick(media) }
             .padding(14.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
-                modifier = Modifier.size(36.dp).clip(RoundedCornerShape(9.dp)).background(Color.White),
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(Color.White),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.InsertDriveFile,
                     contentDescription = null,
-                    tint = Skin.OnSignal,
+                    tint = AppleColor.BubbleOutgoing,
                     modifier = Modifier.size(18.dp)
                 )
             }
@@ -503,7 +522,7 @@ private fun FileBubble(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = media.originalFilename,
-                    style = SkinType.FileName,
+                    style = AppleType.Subhead,
                     color = textColor,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -511,7 +530,7 @@ private fun FileBubble(
                 Spacer(Modifier.height(3.dp))
                 Text(
                     text = "${media.mimeType.substringAfterLast('/').uppercase()} · ${formatFileSize(media.fileSize)}",
-                    style = SkinType.FileMeta,
+                    style = AppleType.Caption1,
                     color = metaColor
                 )
             }
@@ -524,11 +543,11 @@ private fun FileBubble(
         ) {
             if (isOwn) {
                 StatusGlyph(message.status, metaColor, onRetry = {})
-                Spacer(Modifier.width(4.dp))
+                Spacer(Modifier.width(AppleSpace.Xxs))
             }
             Text(
                 text = message.createdAt.formatClockTime(),
-                style = SkinType.BubbleMetaIn,
+                style = AppleType.BubbleMeta,
                 color = metaColor
             )
         }
@@ -537,12 +556,15 @@ private fun FileBubble(
 
 /** Voice note: play disc, waveform, duration. */
 @Composable
-private fun VoiceBubble(message: Message, isOwn: Boolean, onMediaClick: (Media) -> Unit) {
+private fun VoiceBubble(
+    message: Message,
+    isOwn: Boolean,
+    tail: Boolean,
+    onMediaClick: (Media) -> Unit
+) {
     val media = message.media
-    val shape = if (isOwn) Skin.BubbleOut else Skin.BubbleIn
-    val background = if (isOwn) Skin.Signal else Skin.Primary
-    val metaColor = if (isOwn) Skin.OnSignal.copy(alpha = 0.75f) else Skin.OnPrimarySoft
-    val barColor = if (isOwn) Skin.OnSignal else Color.White
+    val metaColor = if (isOwn) Color.White.copy(alpha = 0.75f) else AppleColor.Label3
+    val barColor = if (isOwn) Color.White else AppleColor.Label2
 
     // Fixed waveform: the message stores a duration but not samples, so any
     // amplitude shape here would be invented. This reads as "audio", not as data.
@@ -551,8 +573,8 @@ private fun VoiceBubble(message: Message, isOwn: Boolean, onMediaClick: (Media) 
     Row(
         modifier = Modifier
             .widthIn(min = 246.dp)
-            .clip(shape)
-            .background(background)
+            .clip(bubbleShape(isOwn, tail))
+            .background(if (isOwn) AppleColor.BubbleOutgoing else AppleColor.BubbleIncoming)
             .clickable { media?.let(onMediaClick) }
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -564,7 +586,7 @@ private fun VoiceBubble(message: Message, isOwn: Boolean, onMediaClick: (Media) 
             Icon(
                 imageVector = Icons.Default.PlayArrow,
                 contentDescription = "Play voice message",
-                tint = Skin.OnSignal,
+                tint = AppleColor.BubbleOutgoing,
                 modifier = Modifier.size(16.dp)
             )
         }
@@ -587,7 +609,7 @@ private fun VoiceBubble(message: Message, isOwn: Boolean, onMediaClick: (Media) 
         Spacer(Modifier.width(8.dp))
         Text(
             text = media?.duration?.let { formatDurationSeconds(it) } ?: "0:24",
-            style = SkinType.BubbleMetaOut,
+            style = AppleType.BubbleMeta,
             color = metaColor
         )
     }
@@ -599,10 +621,15 @@ private fun MediaBubble(
     media: Media,
     message: Message,
     isOwn: Boolean,
+    tail: Boolean,
     onMediaClick: (Media) -> Unit
 ) {
-    val shape = if (isOwn) Skin.BubbleOut else Skin.BubbleIn
-    Box(modifier = Modifier.widthIn(max = 260.dp).clip(shape).clickable { onMediaClick(media) }) {
+    Box(
+        modifier = Modifier
+            .widthIn(max = 260.dp)
+            .clip(bubbleShape(isOwn, tail))
+            .clickable { onMediaClick(media) }
+    ) {
         AsyncImage(
             model = media.secureUrl.ifBlank { media.thumbnailUrl },
             contentDescription = media.originalFilename,
@@ -636,7 +663,7 @@ private fun MediaBubble(
         ) {
             Text(
                 text = message.createdAt.formatClockTime(),
-                style = SkinType.BubbleMetaIn,
+                style = AppleType.BubbleMeta,
                 color = Color.White
             )
         }
@@ -675,7 +702,7 @@ private fun StatusGlyph(status: MessageStatus, tint: Color, onRetry: () -> Unit)
             Icon(
                 imageVector = Icons.Default.Refresh,
                 contentDescription = "Retry sending",
-                tint = Skin.OnSignal,
+                tint = AppleColor.SystemYellow,
                 modifier = Modifier.size(12.dp)
             )
         }
@@ -695,135 +722,120 @@ private fun AttachmentBanner(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .padding(horizontal = AppleSpace.Md, vertical = AppleSpace.Xxs)
             .clip(RoundedCornerShape(12.dp))
-            .background(Skin.SurfaceCard)
-            .padding(10.dp)
+            .background(AppleColor.SystemGroupedCell)
+            .padding(AppleSpace.Md)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.InsertDriveFile,
                 contentDescription = null,
-                tint = if (failed) Skin.Error else Skin.Signal,
-                modifier = Modifier.size(14.dp)
+                tint = if (failed) AppleColor.SystemRed else AppleColor.SystemBlue,
+                modifier = Modifier.size(16.dp)
             )
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(AppleSpace.Sm))
             Text(
                 text = fileName,
-                style = SkinType.FileMeta,
-                color = Skin.Ink,
+                style = AppleType.Subhead,
+                color = AppleColor.Label,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
             if (failed) {
                 Box(
-                    modifier = Modifier.size(24.dp).clickable { onRetry() },
+                    modifier = Modifier.size(28.dp).clickable { onRetry() },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Refresh,
                         contentDescription = "Retry upload",
-                        tint = Skin.Signal,
-                        modifier = Modifier.size(14.dp)
+                        tint = AppleColor.SystemBlue,
+                        modifier = Modifier.size(16.dp)
                     )
                 }
             }
             Box(
-                modifier = Modifier.size(24.dp).clickable { onCancel() },
+                modifier = Modifier.size(28.dp).clickable { onCancel() },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Default.Close,
                     contentDescription = "Dismiss upload",
-                    tint = Skin.InkDim,
-                    modifier = Modifier.size(14.dp)
+                    tint = AppleColor.Label3,
+                    modifier = Modifier.size(16.dp)
                 )
             }
         }
         if (failed) {
-            Text(text = error ?: "Upload failed", style = SkinType.FileMeta, color = Skin.Error)
-        } else {
-            Spacer(Modifier.height(6.dp))
-            LinearProgressIndicator(
-                progress = { progress / 100f },
-                color = Skin.Signal,
-                trackColor = Skin.Line,
-                modifier = Modifier.fillMaxWidth().height(3.dp)
+            Text(
+                text = error ?: "Upload failed",
+                style = AppleType.Caption1,
+                color = AppleColor.SystemRed,
+                modifier = Modifier.padding(top = AppleSpace.Xxs)
             )
+        } else {
+            Spacer(Modifier.height(AppleSpace.Sm))
+            AppleProgressBar(progress = progress / 100f)
         }
     }
 }
 
-/**
- * Composer: rounded field with attach, input and mic, plus the lime send button.
- * The plus opens the photo/document chooser.
- */
+/** Composer: attach disc, rounded message field, and the blue send arrow. */
 @Composable
 private fun Composer(
     text: String,
     placeholder: String,
     onTextChange: (String) -> Unit,
     onSend: (String) -> Unit,
-    onAttachPhoto: () -> Unit,
-    onAttachDocument: () -> Unit
+    onAttachClick: () -> Unit
 ) {
-    var showAttachMenu by remember { mutableStateOf(false) }
+    val canSend = text.isNotBlank()
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
+            .padding(horizontal = AppleSpace.Md, vertical = AppleSpace.Sm),
         verticalAlignment = Alignment.Bottom
     ) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(AppleColor.SystemSecondaryBackground)
+                .clickable(onClick = onAttachClick),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = "Attach",
+                tint = AppleColor.Label2,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+
+        Spacer(Modifier.width(AppleSpace.Sm))
+
         Row(
             modifier = Modifier
                 .weight(1f)
-                .heightIn(min = 46.dp)
-                .clip(RoundedCornerShape(15.dp))
-                .background(Skin.Field)
-                .padding(horizontal = 12.dp),
+                .heightIn(min = 36.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(AppleColor.SystemSecondaryBackground)
+                .border(0.5.dp, AppleColor.SeparatorOpaque, RoundedCornerShape(18.dp))
+                .padding(horizontal = AppleSpace.Md),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box {
-                Box(
-                    modifier = Modifier.size(28.dp).clickable { showAttachMenu = true },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Attach",
-                        tint = Skin.InkDim,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-                DropdownMenu(expanded = showAttachMenu, onDismissRequest = { showAttachMenu = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Photo or video") },
-                        onClick = {
-                            showAttachMenu = false
-                            onAttachPhoto()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Document") },
-                        onClick = {
-                            showAttachMenu = false
-                            onAttachDocument()
-                        }
-                    )
-                }
-            }
-
             Box(
-                modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                modifier = Modifier.weight(1f).padding(vertical = 9.dp),
                 contentAlignment = Alignment.CenterStart
             ) {
                 if (text.isEmpty()) {
                     Text(
                         text = placeholder,
-                        style = SkinType.ComposePlaceholder,
-                        color = Skin.InkGhost,
+                        style = AppleType.Body2,
+                        color = AppleColor.Label4,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -831,48 +843,34 @@ private fun Composer(
                 BasicTextField(
                     value = text,
                     onValueChange = onTextChange,
-                    textStyle = SkinType.Body.copy(color = Skin.Ink),
-                    cursorBrush = SolidColor(Skin.Signal),
+                    textStyle = AppleType.Body2.copy(color = AppleColor.Label),
+                    cursorBrush = SolidColor(AppleColor.SystemBlue),
                     maxLines = 4,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(
-                        onSend = { if (text.isNotBlank()) onSend(text) }
+                        onSend = { if (canSend) onSend(text) }
                     ),
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 13.dp)
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
-
-            Icon(
-                imageVector = Icons.Default.Mic,
-                contentDescription = "Record voice message",
-                tint = Skin.InkFaint,
-                modifier = Modifier.size(16.dp)
-            )
         }
 
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(AppleSpace.Sm))
 
-        SignalIconButton(
-            icon = Icons.AutoMirrored.Filled.Send,
-            contentDescription = "Send",
-            size = 40,
-            onClick = { if (text.isNotBlank()) onSend(text) }
-        )
-    }
-}
-
-@Composable
-private fun GroupMenu(
-    onDismiss: () -> Unit,
-    onAddMembers: () -> Unit,
-    onRename: () -> Unit,
-    onLeave: () -> Unit
-) {
-    Box {
-        DropdownMenu(expanded = true, onDismissRequest = onDismiss) {
-            DropdownMenuItem(text = { Text("Add members") }, onClick = onAddMembers)
-            DropdownMenuItem(text = { Text("Rename group") }, onClick = onRename)
-            DropdownMenuItem(text = { Text("Leave group") }, onClick = onLeave)
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(if (canSend) AppleColor.SystemBlue else Color.Transparent)
+                .clickable(enabled = canSend) { onSend(text) },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.Send,
+                contentDescription = "Send",
+                tint = if (canSend) Color.White else AppleColor.Label4,
+                modifier = Modifier.size(18.dp)
+            )
         }
     }
 }
@@ -885,34 +883,63 @@ private fun RenameDialog(
 ) {
     var value by remember { mutableStateOf(currentName) }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = Skin.SurfaceCard,
-        titleContentColor = Skin.Ink,
-        title = { Text("Rename group", style = SkinType.Title) },
-        text = {
-            BasicTextField(
-                value = value,
-                onValueChange = { value = it },
-                singleLine = true,
-                textStyle = SkinType.Body.copy(color = Skin.Ink),
-                cursorBrush = SolidColor(Skin.Signal),
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .width(270.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(AppleColor.SystemSheetBackground)
+        ) {
+            Text(
+                text = "Rename Group",
+                style = AppleType.ListItemTitle,
+                color = AppleColor.Label,
+                textAlign = TextAlign.Center,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Skin.Field)
-                    .padding(12.dp)
+                    .padding(start = AppleSpace.Lg, end = AppleSpace.Lg, top = AppleSpace.Xl)
             )
-        },
-        confirmButton = {
-            TextButton(onClick = { if (value.isNotBlank()) onConfirm(value.trim()) }) {
-                Text("Rename", color = Skin.Signal)
+
+            AppleFormField(
+                value = value,
+                onValueChange = { value = it },
+                placeholder = "Group Name",
+                modifier = Modifier.padding(AppleSpace.Lg)
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(0.5.dp)
+                    .background(AppleColor.Separator)
+            )
+
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Box(
+                    modifier = Modifier.weight(1f).height(44.dp).clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(text = "Cancel", style = AppleType.Body, color = AppleColor.SystemBlue)
+                }
+                Box(
+                    modifier = Modifier.width(0.5.dp).height(44.dp).background(AppleColor.Separator)
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp)
+                        .clickable(enabled = value.isNotBlank()) { onConfirm(value.trim()) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Rename",
+                        style = AppleType.Body.copy(fontWeight = FontWeight.SemiBold),
+                        color = if (value.isNotBlank()) AppleColor.SystemBlue else AppleColor.Label4
+                    )
+                }
             }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel", color = Skin.InkDim) }
         }
-    )
+    }
 }
 
 private fun formatDurationSeconds(seconds: Double): String {

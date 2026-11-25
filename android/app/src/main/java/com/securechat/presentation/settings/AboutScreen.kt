@@ -1,9 +1,8 @@
 package com.securechat.presentation.settings
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,7 +10,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Cloud
@@ -20,227 +20,140 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.OfflinePin
-import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Policy
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Divider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.securechat.R
-import com.securechat.presentation.theme.Theme
+import com.securechat.presentation.components.AppleCell
+import com.securechat.presentation.components.AppleGroupedSection
+import com.securechat.presentation.components.AppleIconTile
+import com.securechat.presentation.components.AppleTopBar
+import com.securechat.presentation.theme.AppleColor
+import com.securechat.presentation.theme.AppleSpace
+import com.securechat.presentation.theme.AppleType
 
 @Composable
 fun AboutScreen(
     onBack: () -> Unit
 ) {
     Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.Top
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AppleColor.SystemGroupedBackground)
     ) {
-        // App Icon and Name
-        Box(
+        AppleTopBar(title = "About", onBack = onBack)
+
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(32.dp)
-                .height(200.dp),
-            contentAlignment = Alignment.Center
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
         ) {
+            /* App identity block, centred like iOS About pages. */
             Column(
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = AppleSpace.Xxxl),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(AppleSpace.Xs)
             ) {
-                androidx.compose.foundation.Image(
-                    painter = androidx.compose.ui.res.painterResource(R.drawable.ic_launcher_foreground),
+                Image(
+                    painter = painterResource(R.drawable.ic_launcher_foreground),
                     contentDescription = null,
                     modifier = Modifier.size(96.dp)
                 )
-                
-                Text(text = "SecureChat", fontSize = 28.sp, fontWeight = FontWeight.Bold)
-                Text(text = "Version 1.0.0", fontSize = 16.sp, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(text = "Private & Secure Messaging", fontSize = 14.sp, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        
-        Divider()
-        
-        // Description
-        Card(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(text = "About SecureChat", fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                Spacer(modifier = Modifier.height(AppleSpace.Sm))
                 Text(
-                    text = "SecureChat is a private messaging application built with security and privacy as top priorities. " +
-                        "All messages are encrypted end-to-end, media is stored securely on Cloudinary with signed URLs, " +
-                        "and your data never leaves your control.",
-                    fontSize = 14.sp,
-                    lineHeight = 22.sp
+                    text = "SecureChat",
+                    style = AppleType.Title1,
+                    color = AppleColor.Label
+                )
+                Text(
+                    text = "Version 1.0.0",
+                    style = AppleType.Footnote,
+                    color = AppleColor.Label3
+                )
+                Text(
+                    text = "Private & Secure Messaging",
+                    style = AppleType.Footnote,
+                    color = AppleColor.Label3
                 )
             }
-        }
-        
-        Spacer(modifier = Modifier.padding(16.dp))
-        
-        // Features
-        Card(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+
+            AppleGroupedSection(
+                header = "Security",
+                footer = "SecureChat is a private messaging application built with security and " +
+                    "privacy as top priorities. Messages are encrypted end-to-end and media is " +
+                    "stored securely with signed URLs."
             ) {
-                Text(text = "Key Features", fontSize = 18.sp, fontWeight = FontWeight.Medium)
-                
-                FeatureRow(
-                    icon = Icons.Default.Lock,
+                AppleCell(
                     title = "End-to-End Encryption",
-                    description = "Messages encrypted on device"
+                    subtitle = "Messages encrypted on device",
+                    leading = { AppleIconTile(Icons.Filled.Lock, background = AppleColor.SystemGreen) }
                 )
-                
-                FeatureRow(
-                    icon = Icons.Default.Cloud,
+                AppleCell(
                     title = "Secure Media Storage",
-                    description = "Cloudinary with signed URLs"
+                    subtitle = "Stored with signed URLs",
+                    leading = { AppleIconTile(Icons.Filled.Cloud, background = AppleColor.SystemBlue) }
                 )
-                
-                FeatureRow(
-                    icon = Icons.Default.OfflinePin,
+                AppleCell(
                     title = "Offline-First",
-                    description = "Works without internet"
+                    subtitle = "Works without internet",
+                    leading = { AppleIconTile(Icons.Filled.OfflinePin, background = AppleColor.SystemOrange) }
                 )
-                
-                FeatureRow(
-                    icon = Icons.Default.Delete,
-                    title = "Self-Destructing Messages",
-                    description = "Optional disappearing messages"
+                AppleCell(
+                    title = "Disappearing Messages",
+                    subtitle = "Optional self-destructing messages",
+                    leading = { AppleIconTile(Icons.Filled.Delete, background = AppleColor.SystemRed) },
+                    showDivider = false
                 )
             }
-        }
-        
-        Spacer(modifier = Modifier.padding(16.dp))
-        
-        // Links
-        Card(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(text = "Legal & Links", fontSize = 18.sp, fontWeight = FontWeight.Medium)
-                
-                LinkRow(
-                    icon = Icons.Default.Policy,
+
+            AppleGroupedSection(header = "Legal & Links") {
+                AppleCell(
                     title = "Privacy Policy",
+                    leading = { AppleIconTile(Icons.Filled.Policy, background = AppleColor.SystemGray) },
+                    showChevron = true,
+                    dividerInset = 57.dp,
                     onClick = { /* Open privacy policy */ }
                 )
-                
-                LinkRow(
-                    icon = Icons.Default.Description,
+                AppleCell(
                     title = "Terms of Service",
+                    leading = { AppleIconTile(Icons.Filled.Description, background = AppleColor.SystemGray) },
+                    showChevron = true,
+                    dividerInset = 57.dp,
                     onClick = { /* Open terms */ }
                 )
-                
-                LinkRow(
-                    icon = Icons.Default.Code,
+                AppleCell(
                     title = "Open Source Licenses",
+                    leading = { AppleIconTile(Icons.Filled.Code, background = AppleColor.SystemGray) },
+                    showChevron = true,
+                    dividerInset = 57.dp,
                     onClick = { /* Open licenses */ }
                 )
-                
-                LinkRow(
-                    icon = Icons.Default.BugReport,
+                AppleCell(
                     title = "Report a Bug",
+                    leading = { AppleIconTile(Icons.Filled.BugReport, background = AppleColor.SystemGray) },
+                    showChevron = true,
+                    showDivider = false,
+                    dividerInset = 57.dp,
                     onClick = { /* Open bug report */ }
                 )
             }
-        }
-        
-        Spacer(modifier = Modifier.padding(32.dp))
-        
-        // Built with love
-        Text(
-            text = "Built with ❤️ using Kotlin, Jetpack Compose, Go, and PostgreSQL",
-            fontSize = 12.sp,
-            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth().padding(bottom = 32.dp)
-        )
-    }
-}
 
-@Composable
-fun FeatureRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    description: String
-) {
-    ListItem(
-        modifier = Modifier.fillMaxWidth(),
-        leadingContent = {
-            Box(
+            Text(
+                text = "Built with ❤️ using Kotlin, Jetpack Compose, Go, and PostgreSQL",
+                style = AppleType.Caption2,
+                color = AppleColor.Label4,
+                textAlign = TextAlign.Center,
                 modifier = Modifier
-                    .size(40.dp)
-                    .background(androidx.compose.material3.MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(8.dp))
-                    .padding(8.dp)
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = androidx.compose.material3.MaterialTheme.colorScheme.primary
-                )
-            }
-        },
-        headlineContent = {
-            Text(text = title, fontSize = 16.sp)
-        },
-        supportingContent = {
-            Text(text = description, fontSize = 14.sp, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    )
-}
-
-@Composable
-fun LinkRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    onClick: () -> Unit
-) {
-    ListItem(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() },
-        leadingContent = {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(24.dp).padding(end = 16.dp)
-            )
-        },
-        headlineContent = {
-            Text(text = title, fontSize = 16.sp)
-        },
-        trailingContent = {
-            Icon(
-                imageVector = Icons.Default.OpenInNew,
-                contentDescription = null,
-                tint = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    .fillMaxWidth()
+                    .padding(horizontal = AppleSpace.Xxxl, vertical = AppleSpace.Xxl)
             )
         }
-    )
+    }
 }

@@ -39,18 +39,18 @@
         <item name="android:colorBackground">@color/md_theme_light_background</item>
         <item name="android:colorForeground">@color/md_theme_light_onBackground</item>
 
-        <!-- Status Bar -->
-        <item name="android:statusBarColor">#FF05060A</item>
-        <item name="android:navigationBarColor">#FF05060A</item>
+        <!-- System bars -->
+        <item name="android:statusBarColor">#FF000000</item>
+        <item name="android:navigationBarColor">#FF000000</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
         <!--
           The design is dark through and through, so the window behind Compose is
-          painted Void. With transparent system bars the window colour is what
+          painted black to match AppleColor.SystemBackground. That colour is what
           shows at the top and bottom of the screen: leaving it at the Material
           default produced white bands above the title and under the tab bar.
         -->
-        <item name="android:windowBackground">#FF05060A</item>
+        <item name="android:windowBackground">#FF000000</item>
     </style>
 
     <!-- Splash Screen Theme -->

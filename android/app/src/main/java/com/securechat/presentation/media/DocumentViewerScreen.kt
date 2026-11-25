@@ -8,34 +8,35 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.InsertDriveFile
-import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.PictureAsPdf
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Slideshow
 import androidx.compose.material.icons.filled.TableChart
-import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.securechat.R
+import com.securechat.core.utils.formatFileSize
 import com.securechat.domain.model.Media
-import com.securechat.presentation.theme.Theme
+import com.securechat.presentation.components.AppleButton
+import com.securechat.presentation.components.AppleIconButton
+import com.securechat.presentation.components.AppleTertiaryButton
+import com.securechat.presentation.components.AppleTopBar
+import com.securechat.presentation.theme.AppleColor
+import com.securechat.presentation.theme.AppleSpace
+import com.securechat.presentation.theme.AppleType
 
 @Composable
 fun DocumentViewerScreen(
@@ -46,105 +47,98 @@ fun DocumentViewerScreen(
     onOpen: () -> Unit = {},
     statusMessage: String? = null
 ) {
-    Box(modifier = Modifier.fillMaxSize().background(Color.White)) {
-        // Document Preview Area
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AppleColor.SystemBackground)
+    ) {
+        AppleTopBar(
+            title = "Document",
+            onBack = onClose,
+            actions = {
+                AppleIconButton(
+                    icon = Icons.AutoMirrored.Filled.OpenInNew,
+                    contentDescription = "Open with",
+                    onClick = onOpen
+                )
+            }
+        )
+
         Box(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.weight(1f).fillMaxWidth(),
             contentAlignment = Alignment.Center
         ) {
             Column(
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                verticalArrangement = Arrangement.spacedBy(AppleSpace.Md),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(horizontal = AppleSpace.Xxl)
             ) {
-                // Document type icon
                 val (icon, typeColor) = when (media.mimeType) {
-                    "application/pdf" -> Icons.Default.PictureAsPdf to Color.Red
-                    "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> Icons.Default.Description to Color.Blue
-                    "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" -> Icons.Default.TableChart to Color.Green
-                    "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation" -> Icons.Default.Slideshow to Color(0xFFFF9800)
-                    else -> Icons.Default.InsertDriveFile to Color.Gray
+                    "application/pdf" -> Icons.Default.PictureAsPdf to AppleColor.SystemRed
+                    "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> Icons.Default.Description to AppleColor.SystemBlue
+                    "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" -> Icons.Default.TableChart to AppleColor.SystemGreen
+                    "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation" -> Icons.Default.Slideshow to AppleColor.SystemOrange
+                    else -> Icons.AutoMirrored.Filled.InsertDriveFile to AppleColor.Label3
                 }
-                
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = typeColor,
-                    modifier = Modifier.size(80.dp)
-                )
-                
-                // File name
+
+                Box(
+                    modifier = Modifier
+                        .size(88.dp)
+                        .background(AppleColor.SystemSecondaryBackground, RoundedCornerShape(20.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = typeColor,
+                        modifier = Modifier.size(44.dp)
+                    )
+                }
+
+                Spacer(Modifier.height(AppleSpace.Xs))
+
                 Text(
                     text = media.originalFilename,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color.Black
+                    style = AppleType.Title3,
+                    color = AppleColor.Label,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
-                
-                // File size
+
                 Text(
-                    text = "${(media.fileSize / 1024).toInt()} KB",
-                    fontSize = 14.sp,
-                    color = Color.Gray
+                    text = formatFileSize(media.fileSize),
+                    style = AppleType.Footnote,
+                    color = AppleColor.Label3
                 )
 
                 statusMessage?.let { message ->
                     Text(
                         text = message,
-                        fontSize = 12.sp,
-                        color = Color(0xFF1A73E8)
+                        style = AppleType.Footnote,
+                        color = AppleColor.SystemBlue,
+                        textAlign = TextAlign.Center
                     )
                 }
             }
         }
-        
-        // Bottom Action Bar
-        Box(
+
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp)
-                .background(Color.White, RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
-                .padding(vertical = 16.dp)
+                .padding(AppleSpace.Lg),
+            horizontalArrangement = Arrangement.spacedBy(AppleSpace.Sm)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                IconButton(onClick = onClose) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Close",
-                        tint = Color.Gray
-                    )
-                }
-                
-                Spacer(modifier = Modifier.weight(1f))
-                
-                Button(onClick = onDownload) {
-                    Icon(
-                        imageVector = Icons.Default.Download,
-                        contentDescription = "Download"
-                    )
-                    Spacer(modifier = Modifier.padding(8.dp))
-                    Text("Download")
-                }
-                
-                Button(onClick = onShare) {
-                    Icon(
-                        imageVector = Icons.Default.Share,
-                        contentDescription = "Share"
-                    )
-                    Spacer(modifier = Modifier.padding(8.dp))
-                    Text("Share")
-                }
-                
-                IconButton(onClick = onOpen) {
-                    Icon(
-                        imageVector = Icons.Default.OpenInNew,
-                        contentDescription = "Open with",
-                        tint = Color.Gray
-                    )
-                }
-            }
+            AppleTertiaryButton(
+                text = "Share",
+                onClick = onShare,
+                modifier = Modifier.weight(1f)
+            )
+            AppleButton(
+                text = "Download",
+                onClick = onDownload,
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }
